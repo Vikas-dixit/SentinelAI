@@ -31,6 +31,12 @@ test('parses quoted CSV and finds a large transfer',()=>{
   assert.equal(events[0].path,'/a,b');
   assert.equal(investigate(events).findings[0].rule,'DATA-004');
 });
+test('CSV handles escaped quotes and multiline fields but rejects broken quotes',()=>{
+  const csv=`timestamp,event_type,source_ip,path\n${t(0)},http,192.0.2.1,"/a,""b""\nline"`;
+  assert.equal(parseLogs(csv,'events.csv')[0].path,'/a,"b"\nline');
+  assert.throws(()=>parseLogs(`timestamp,event_type\n${t(0)},lo"gin`,'events.csv'),/unexpected quote/);
+  assert.throws(()=>parseLogs(`timestamp,event_type\n${t(0)},"login"oops`,'events.csv'),/text after a closing quote/);
+});
 test('parses SSH auth text and rejects malformed JSON lines',()=>{
   const logs=`Sep 26 06:00:00 host sshd[1]: Failed password for admin from 203.0.113.4 port 22 ssh2\nSep 26 06:00:01 host sshd[1]: Accepted password for admin from 203.0.113.4 port 22 ssh2`;
   const events=parseLogs(logs,'auth.log');
@@ -112,6 +118,14 @@ test('CSV rejects malformed rows and missing required fields',()=>{
 test('pasted log text obeys the same input size limit as uploads',()=>{
   assert.throws(()=>parseLogs('x'.repeat(2*1024*1024+1)),/2 MB/);
   assert.throws(()=>parseLogs('अ'.repeat(800_000)),/2 MB/);
+});
+test('invalid numeric fields cannot create synthetic network or transfer alerts',()=>{
+  const records=Array.from({length:8},(_,i)=>({timestamp:t(i/4),event_type:'network',source_ip:'192.0.2.1',destination_port:65536+i,bytes_sent:'Infinity',status:999}));
+  const events=parseLogs(JSON.stringify(records));
+  assert.equal(events[0].destination_port,0);
+  assert.equal(events[0].bytes_sent,0);
+  assert.equal(events[0].status,0);
+  assert.equal(investigate(events).findings.length,0);
 });
 test('rejects malformed JSON event envelopes instead of treating them as an event',()=>{
   assert.throws(()=>parseLogs('{"events":{"timestamp":"2026-09-26T06:00:00Z"}}'),/events field must be an array/);
