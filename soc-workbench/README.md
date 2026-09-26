@@ -6,7 +6,7 @@ A defensive log investigation workbench for Vikas Dixit's SentinelAI portfolio. 
 
 The owner-private app runs at https://sentinelai-soc-vikas.dixitvikas057.chatgpt.site. It opens with a safe sample investigation. Use **Upload file** or **Paste logs** for your own data. Supported input is up to 2 MB and 5,000 events. Local rule-based triage works without an API key.
 
-The optional **Ask external AI** action sends up to 20 findings and 40 prioritized event excerpts to OpenAI's Responses API for a cautious analyst brief. The key is read only by the server from `OPENAI_API_KEY`; it is never embedded in browser code. This feature becomes available only when that secret is configured for the deployed Site. OpenAI Platform API billing is separate from ChatGPT Plus. The API request uses `gpt-5.6-luna`, `store: false`, a strict JSON schema, and a 25-second timeout. AI output is a hypothesis and cites only event IDs supplied in the request.
+The optional **Ask external AI** action sends up to 20 findings and 40 event excerpts to OpenAI's Responses API for a cautious analyst brief. Evidence is selected across findings so one large alert does not consume the entire excerpt budget. The key is read only by the server from `OPENAI_API_KEY`; it is never embedded in browser code. This feature becomes available only when that secret is configured for the deployed Site. OpenAI Platform API billing is separate from ChatGPT Plus. The API request uses `gpt-5.6-luna`, `store: false`, a strict JSON schema, and a 25-second timeout. AI output is a hypothesis and cites only event IDs supplied in the request.
 
 ## Local rule engine
 
