@@ -107,14 +107,26 @@ test('undated standalone indicators can still create findings',()=>{
 test('CSV rejects malformed rows and missing required fields',()=>{
   assert.throws(()=>parseLogs(`timestamp,event_type,source_ip\n${t(0)},network`,'events.csv'),/row 2 has 2 columns/);
   assert.throws(()=>parseLogs('source_ip,bytes_sent\n10.0.0.1,50000000','events.csv'),/needs a timestamp/);
+  assert.throws(()=>parseLogs('source_ip,bytes_sent\n10.0.0.1,50000000'),/needs a timestamp/);
 });
 test('pasted log text obeys the same input size limit as uploads',()=>{
   assert.throws(()=>parseLogs('x'.repeat(2*1024*1024+1)),/2 MB/);
   assert.throws(()=>parseLogs('अ'.repeat(800_000)),/2 MB/);
 });
+test('rejects malformed JSON event envelopes instead of treating them as an event',()=>{
+  assert.throws(()=>parseLogs('{"events":{"timestamp":"2026-09-26T06:00:00Z"}}'),/events field must be an array/);
+  assert.throws(()=>parseLogs('{"events":[]}'),/No security events found/);
+});
 test('events without source identity cannot form a shared time-window alert',()=>{
   const records=Array.from({length:8},(_,i)=>({timestamp:t(i/4),event_type:'network',destination_port:20+i}));
   assert.equal(investigate(parseLogs(JSON.stringify(records))).findings.length,0);
+});
+test('placeholder source and user values do not merge unrelated events',()=>{
+  const records=Array.from({length:8},(_,i)=>({timestamp:t(i/4),event_type:'network',source_ip:'unknown',username:'-',destination_port:20+i}));
+  const events=parseLogs(JSON.stringify(records));
+  assert.equal(events[0].source_ip,'');
+  assert.equal(events[0].username,'');
+  assert.equal(investigate(events).findings.length,0);
 });
 test('parses IPv6 source addresses in SSH and web access logs',()=>{
   const ssh=parseLogs('Sep 26 06:00:00 host sshd[1]: Failed password for admin from 2001:db8::42 port 22 ssh2','auth.log');
