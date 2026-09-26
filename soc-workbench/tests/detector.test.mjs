@@ -75,3 +75,30 @@ test('events without source identity cannot form a shared time-window alert',()=
   const records=Array.from({length:8},(_,i)=>({timestamp:t(i/4),event_type:'network',destination_port:20+i}));
   assert.equal(investigate(parseLogs(JSON.stringify(records))).findings.length,0);
 });
+test('parses IPv6 source addresses in SSH and web access logs',()=>{
+  const ssh=parseLogs('Sep 26 06:00:00 host sshd[1]: Failed password for admin from 2001:db8::42 port 22 ssh2','auth.log');
+  const web=parseLogs('2001:db8::42 - - [26/Sep/2026:06:00:00 +0000] "GET /admin HTTP/1.1" 404 123','access.log');
+  assert.equal(ssh[0].source_ip,'2001:db8::42');
+  assert.equal(web[0].source_ip,'2001:db8::42');
+});
+test('unrecognized text remains visible with an explicit coverage count',()=>{
+  const events=parseLogs('Sep 26 06:00:00 host customd[1]: unrelated event','custom.log');
+  const result=investigate(events);
+  assert.equal(result.unrecognized_count,1);
+  assert.equal(result.timeline[0].type,'other');
+  assert.match(reportMarkdown(result,events),/Events with an unrecognized type: 1/);
+});
+test('maps common Windows security event IDs to authentication findings',()=>{
+  const records=[...Array.from({length:5},(_,i)=>({TimeCreated:t(i),EventID:4625,IpAddress:'203.0.113.44',TargetUserName:'admin'})),
+    {TimeCreated:t(6),EventID:4624,IpAddress:'203.0.113.44',TargetUserName:'admin'}];
+  const events=parseLogs(JSON.stringify(records));
+  assert.deepEqual(events.map(e=>e.type),['login_failed','login_failed','login_failed','login_failed','login_failed','login_success']);
+  assert.equal(investigate(events).findings[0].rule,'AUTH-001');
+});
+test('parses Windows Security CSV with reordered columns',()=>{
+  const csv=`IpAddress,EventID,TimeCreated,TargetUserName\n203.0.113.44,4625,${t(0)},admin`;
+  const events=parseLogs(csv);
+  assert.equal(events[0].type,'login_failed');
+  assert.equal(events[0].source_ip,'203.0.113.44');
+  assert.equal(events[0].timestamp,t(0));
+});
