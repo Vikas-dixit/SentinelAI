@@ -6,7 +6,7 @@ A defensive log investigation workbench for Vikas Dixit's SentinelAI portfolio. 
 
 The owner-private app runs at https://sentinelai-soc-vikas.dixitvikas057.chatgpt.site. It opens with a safe sample investigation. Use **Upload file** or **Paste logs** for your own data. Supported input is up to 2 MB and 5,000 events. Local rule-based triage works without an API key.
 
-The optional **Ask external AI** action sends a bounded selection of findings and event excerpts to OpenAI's Responses API for a cautious analyst brief. The key is read only by the server from `OPENAI_API_KEY`; it is never embedded in browser code. This feature becomes available only when that secret is configured for the deployed Site. OpenAI Platform API billing is separate from ChatGPT Plus. The API request uses `gpt-5.6-luna`, `store: false`, a strict JSON schema, and a 25-second timeout. AI output is a hypothesis and cites only event IDs supplied in the request.
+The optional **Ask external AI** action sends up to 20 findings and 40 prioritized event excerpts to OpenAI's Responses API for a cautious analyst brief. The key is read only by the server from `OPENAI_API_KEY`; it is never embedded in browser code. This feature becomes available only when that secret is configured for the deployed Site. OpenAI Platform API billing is separate from ChatGPT Plus. The API request uses `gpt-5.6-luna`, `store: false`, a strict JSON schema, and a 25-second timeout. AI output is a hypothesis and cites only event IDs supplied in the request.
 
 ## Local rule engine
 
@@ -32,4 +32,4 @@ Normalized event fields include `timestamp`, `event_type`, `source_ip`, `destina
 | DATA-004 | At least 50 MB in one outbound event | Size alone is weak evidence |
 | PROC-005 | Selected encoded PowerShell or download-and-execute command patterns | Capture process tree before response |
 
-The rule engine runs in the browser. Files are not uploaded during local triage. Clicking **Ask external AI** explicitly transmits selected evidence excerpts to OpenAI; remove sensitive data first. The deployed Site is private to its owner. Exported reports can contain excerpts of supplied logs, so handle them as sensitive investigation data. No live endpoint actions or SIEM ingestion are performed. Findings are leads, not proof of compromise.
+The rule engine runs in the browser. Timeline and finding lists load in pages for larger investigations, while exports include the full result. Files are not uploaded during local triage. Clicking **Ask external AI** explicitly transmits selected evidence excerpts to OpenAI; remove sensitive data first. The deployed Site is private to its owner. Exported reports can contain excerpts of supplied logs, so handle them as sensitive investigation data. No live endpoint actions or SIEM ingestion are performed. Findings are leads, not proof of compromise.
