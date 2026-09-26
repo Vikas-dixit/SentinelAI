@@ -7,14 +7,19 @@ export function parseLogs(text, filename = '') {
   if (!source) throw new Error('Paste logs or choose a file first.');
   let records;
   if (source.startsWith('[') || source.startsWith('{')) {
+    let value;
     try {
-      const value = JSON.parse(source);
-      records = Array.isArray(value) ? value : Array.isArray(value.events) ? value.events : [value];
+      value = JSON.parse(source);
     } catch {
       records = source.split(/\r?\n/).filter(Boolean).map((line, i) => {
         try { return JSON.parse(line); }
         catch { throw new Error(`Invalid JSON on line ${i + 1}.`); }
       });
+    }
+    if (value !== undefined) {
+      if (value && typeof value==='object' && !Array.isArray(value) && 'events' in value && !Array.isArray(value.events))
+        throw new Error('The JSON events field must be an array.');
+      records = Array.isArray(value) ? value : Array.isArray(value?.events) ? value.events : [value];
     }
   } else if (filename.toLowerCase().endsWith('.csv') || looksLikeCSV(source)) {
     const rows = parseCSV(source);
@@ -35,8 +40,8 @@ export function parseLogs(text, filename = '') {
 
 function looksLikeCSV(source) {
   const header = source.split(/\r?\n/, 1)[0].split(',').map(s => s.trim().replace(/^\uFEFF/, '').replace(/^"|"$/g, '').toLowerCase());
-  return header.length >= 2 && header.some(h => ['timestamp','time','@timestamp','date','timecreated','time_created'].includes(h))
-    && header.some(h => ['event_type','type','action','eventid','event_id'].includes(h));
+  const known=new Set(['timestamp','time','@timestamp','date','timecreated','time_created','event_type','type','action','eventid','event_id','source_ip','src_ip','ipaddress','username','destination_port','bytes_sent']);
+  return header.length>=2 && header.filter(h=>known.has(h)).length>=2;
 }
 
 function parseCSV(text) {
@@ -81,6 +86,11 @@ function literalIP(value) {
   return octets.length===4 && octets.every(x=>/^\d{1,3}$/.test(x) && Number(x)<=255) ? candidate : '';
 }
 
+function identity(value,max) {
+  const label=String(value??'').trim().slice(0,max);
+  return /^(?:-|unknown|n\/a|null|none|undefined)$/i.test(label)?'':label;
+}
+
 function normalize(r, i) {
   if (!r || typeof r !== 'object' || Array.isArray(r)) throw new Error(`Event ${i + 1} must be an object.`);
   const obj=value=>value && typeof value==='object' && !Array.isArray(value) ? value : {};
@@ -110,9 +120,9 @@ function normalize(r, i) {
     : categories.includes('network')?'network':null;
   return {
     id: i + 1, timestamp, type: windowsAuthType || (type === 'login' ? (success ? 'login_success' : failure ? 'login_failed' : 'login_unknown') : authType[type] || (explicitType==null?ecsType:null) || type),
-    source_ip: String(r.source_ip ?? r.src_ip ?? r.src ?? r.ip ?? r.IpAddress ?? r.ipaddress ?? r.ip_address ?? ecsSource.ip ?? '').slice(0,80),
+    source_ip: identity(r.source_ip ?? r.src_ip ?? r.src ?? r.ip ?? r.IpAddress ?? r.ipaddress ?? r.ip_address ?? ecsSource.ip,80),
     destination_ip: String(r.destination_ip ?? r.dst_ip ?? r.dst ?? ecsDestination.ip ?? '').slice(0,80),
-    username: String(r.username ?? (typeof r.user==='string'?r.user:undefined) ?? r.TargetUserName ?? r.targetusername ?? r.target_user_name ?? ecsUser.name ?? '').slice(0,100),
+    username: identity(r.username ?? (typeof r.user==='string'?r.user:undefined) ?? r.TargetUserName ?? r.targetusername ?? r.target_user_name ?? ecsUser.name,100),
     destination_port: Number(r.destination_port ?? r.dst_port ?? r.port ?? ecsDestination.port ?? 0) || 0,
     process_name: String(r.process_name ?? (typeof r.process==='string'?r.process:undefined) ?? r.command ?? ecsProcess.command_line ?? ecsProcess.name ?? '').slice(0,250),
     bytes_sent: Number(r.bytes_sent ?? r.bytes_out ?? ecsSource.bytes ?? 0) || 0,
