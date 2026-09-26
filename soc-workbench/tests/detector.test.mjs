@@ -29,6 +29,15 @@ test('parses SSH auth text and rejects malformed JSON lines',()=>{
   assert.equal(new Date(events[0].timestamp).getUTCFullYear(),new Date().getUTCFullYear());
   assert.throws(()=>parseLogs('{"event_type":"login"}\nnot-json','events.jsonl'),/line 2/);
 });
+test('yearless syslog dates ahead of today resolve to the previous year',()=>{
+  const now=new Date();
+  const tomorrow=new Date(Date.now()+2*24*60*60_000);
+  if(tomorrow.getFullYear()!==now.getFullYear()) return;
+  const month=tomorrow.toLocaleString('en-US',{month:'short',timeZone:'UTC'});
+  const day=tomorrow.getUTCDate();
+  const event=parseLogs(`${month} ${day} 06:00:00 host sshd[1]: Failed password for admin from 203.0.113.4 port 22 ssh2`,'auth.log')[0];
+  assert.equal(new Date(event.timestamp).getUTCFullYear(),now.getUTCFullYear()-1);
+});
 test('retains Apache access log timestamp and request path',()=>{
   const events=parseLogs('203.0.113.4 - - [26/Sep/2026:06:00:00 +0000] "GET /admin HTTP/1.1" 404 123','access.log');
   assert.equal(events[0].timestamp,'2026-09-26T06:00:00.000Z');
@@ -63,6 +72,17 @@ test('invalid timestamps do not contaminate a valid authentication window',()=>{
   const result=investigate(parseLogs(JSON.stringify(records)));
   assert.equal(result.undated_count,1);
   assert.equal(result.findings.length,0);
+});
+test('parses Unix second and millisecond timestamps without inventing dates',()=>{
+  const iso='2026-09-26T06:00:00.000Z';
+  const epoch=Date.parse(iso);
+  const events=parseLogs(JSON.stringify([
+    {timestamp:epoch/1000,event_type:'network',source_ip:'192.0.2.1'},
+    {timestamp:String(epoch),event_type:'network',source_ip:'192.0.2.1'},
+    {timestamp:'1',event_type:'network',source_ip:'192.0.2.1'},
+    {timestamp:0,event_type:'network',source_ip:'192.0.2.1'}
+  ]));
+  assert.deepEqual(events.map(e=>e.timestamp),[iso,iso,null,'1970-01-01T00:00:00.000Z']);
 });
 test('detects reordered CSV headers and authentication synonyms',()=>{
   const csv=['source_ip,event_type,timestamp',...Array.from({length:5},(_,i)=>`203.0.113.10,authentication_failure,${t(i)}`),`203.0.113.10,auth_success,${t(6)}`].join('\n');
