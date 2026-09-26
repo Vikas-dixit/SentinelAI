@@ -14,16 +14,27 @@ export function parseLogs(text, filename = '') {
         catch { throw new Error(`Invalid JSON on line ${i + 1}.`); }
       });
     }
-  } else if (filename.toLowerCase().endsWith('.csv') || /^timestamp,|^time,|^event_type,/i.test(source)) {
+  } else if (filename.toLowerCase().endsWith('.csv') || looksLikeCSV(source)) {
     const rows = parseCSV(source);
-    const headers = rows.shift()?.map(s => s.trim()) || [];
-    records = rows.filter(row => row.some(Boolean)).map(row => Object.fromEntries(headers.map((h, i) => [h, row[i] ?? ''])));
+    const headers = rows.shift()?.map(s => s.trim().replace(/^\uFEFF/, '').toLowerCase()) || [];
+    if (!headers.some(h => ['timestamp','time','@timestamp','date'].includes(h)) || !headers.some(h => ['event_type','type','action'].includes(h)))
+      throw new Error('CSV needs a timestamp and an event_type, type, or action column.');
+    records = rows.filter(row => row.some(Boolean)).map((row, i) => {
+      if (row.length !== headers.length) throw new Error(`CSV row ${i + 2} has ${row.length} columns; expected ${headers.length}.`);
+      return Object.fromEntries(headers.map((h, column) => [h, row[column]]));
+    });
   } else {
     records = source.split(/\r?\n/).filter(Boolean).map(parseTextLine).filter(Boolean);
   }
   if (!records.length) throw new Error('No security events found.');
   if (records.length > 5000) throw new Error('Use at most 5,000 events per investigation.');
   return records.map((record, i) => normalize(record, i));
+}
+
+function looksLikeCSV(source) {
+  const header = source.split(/\r?\n/, 1)[0].split(',').map(s => s.trim().replace(/^\uFEFF/, '').replace(/^"|"$/g, '').toLowerCase());
+  return header.length >= 2 && header.some(h => ['timestamp','time','@timestamp','date'].includes(h))
+    && header.some(h => ['event_type','type','action','source_ip','src_ip','src','ip'].includes(h));
 }
 
 function parseCSV(text) {
@@ -69,11 +80,15 @@ function normalize(r, i) {
     const guess = new Date(`${new Date().getFullYear()} ${rawTime}`);
     timestamp = isNaN(+guess) ? null : guess.toISOString();
   }
-  if (!timestamp || timestamp === 'Invalid Date') timestamp = new Date(Date.now() + i).toISOString();
+  // Missing or invalid dates must not become fabricated time-window evidence.
   const type = String(r.event_type ?? r.type ?? r.action ?? 'other').toLowerCase().replace(/[ -]/g,'_');
-  const success = r.success === true || r.success === 'true';
+  const success = r.success === true || String(r.success).toLowerCase() === 'true';
+  const authType = {
+    auth_failure:'login_failed', authentication_failure:'login_failed', failed_login:'login_failed', login_failure:'login_failed',
+    auth_success:'login_success', authentication_success:'login_success', successful_login:'login_success', login_succeeded:'login_success'
+  };
   return {
-    id: i + 1, timestamp, type: type === 'login' ? (success ? 'login_success' : 'login_failed') : type,
+    id: i + 1, timestamp, type: type === 'login' ? (success ? 'login_success' : 'login_failed') : authType[type] || type,
     source_ip: String(r.source_ip ?? r.src_ip ?? r.src ?? r.ip ?? '').slice(0,80),
     destination_ip: String(r.destination_ip ?? r.dst_ip ?? r.dst ?? '').slice(0,80),
     username: String(r.username ?? r.user ?? '').slice(0,100),
@@ -87,7 +102,7 @@ function normalize(r, i) {
 }
 
 export function investigate(events) {
-  const ordered = [...events].sort((a,b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+  const ordered = [...events].sort((a,b) => (a.timestamp ? Date.parse(a.timestamp) : Infinity) - (b.timestamp ? Date.parse(b.timestamp) : Infinity));
   const findings = [];
   const groups = new Map();
   for (const event of ordered) {
@@ -103,20 +118,20 @@ export function investigate(events) {
       evidence:evidence.map(e=>e.id),explanation,next_steps:nextSteps,tactic});
   }
   for (const [source, items] of groups) {
-    const failures = items.filter(e => e.type === 'login_failed');
+    const failures = items.filter(e => e.timestamp && e.type === 'login_failed');
     const cluster = rollingCluster(failures,15*MINUTE,5);
     if (cluster) {
-      const laterSuccess = items.find(e => e.type === 'login_success' && Date.parse(e.timestamp) >= Date.parse(cluster.at(-1).timestamp) && Date.parse(e.timestamp) - Date.parse(cluster.at(-1).timestamp) <= 30*MINUTE);
+      const laterSuccess = items.find(e => e.timestamp && e.type === 'login_success' && Date.parse(e.timestamp) >= Date.parse(cluster.at(-1).timestamp) && Date.parse(e.timestamp) - Date.parse(cluster.at(-1).timestamp) <= 30*MINUTE);
       add('AUTH-001',laterSuccess?'Successful login after repeated failures':'Repeated authentication failures',laterSuccess?'critical':'high',laterSuccess?'high':'medium',laterSuccess?[...cluster,laterSuccess]:cluster,
         `${source} produced ${cluster.length} failed logins in 15 minutes${laterSuccess?' followed by a successful login':''}. This pattern warrants account and source review.`,
         ['Validate whether the source and account activity were authorized.','Review related authentication events and reset credentials if compromise is confirmed.','Apply rate limiting or MFA where appropriate.'],'Credential Access');
     }
-    const network = items.filter(e=>e.destination_port>0 && ['network','connection','firewall'].includes(e.type));
+    const network = items.filter(e=>e.timestamp && e.destination_port>0 && ['network','connection','firewall'].includes(e.type));
     const ports = rollingDistinctPorts(network,5*MINUTE,8);
     if (ports) add('NET-002','Multi-port connection sweep','high','medium',ports,
       `${source} contacted ${new Set(ports.map(e=>e.destination_port)).size} distinct ports within five minutes.`,
       ['Confirm whether this is an approved scanner.','Review firewall and endpoint logs for follow-on access.','Restrict the source if unauthorized.'],'Discovery');
-    const web = items.filter(e=>e.type==='http');
+    const web = items.filter(e=>e.timestamp && e.type==='http');
     const probes = web.filter(e=>/\b(401|403|404|500)\b/.test(String(e.status)) || /(\.\.|%2e|union(?:%20|\+| )select|<script|%3cscript|\/admin|\/\.env)/i.test(e.path));
     const webCluster = rollingCluster(probes,10*MINUTE,5);
     if (webCluster) add('WEB-003','Repeated web probing','medium','medium',webCluster,
@@ -133,9 +148,9 @@ export function investigate(events) {
         ['Capture process tree and command line.','Review parent process, user, and script content.','Isolate the host if malicious activity is confirmed.'],'Execution');
   }
   const rank={critical:4,high:3,medium:2,low:1};
-  findings.sort((a,b)=>rank[b.severity]-rank[a.severity] || a.first_seen.localeCompare(b.first_seen));
+  findings.sort((a,b)=>rank[b.severity]-rank[a.severity] || (a.first_seen || '').localeCompare(b.first_seen || ''));
   const score=Math.min(100,findings.reduce((n,f)=>n+({critical:45,high:27,medium:15,low:7}[f.severity]||0),0));
-  return {generated_at:new Date().toISOString(),event_count:events.length,findings,score,
+  return {generated_at:new Date().toISOString(),event_count:events.length,undated_count:events.filter(e=>!e.timestamp).length,findings,score,
     severity:score>=70?'critical':score>=40?'high':score>=15?'medium':'low',
     timeline:ordered.map(e=>({id:e.id,timestamp:e.timestamp,type:e.type,source:e.source_ip||e.username||'unknown',summary:eventSummary(e)}))};
 }
@@ -165,7 +180,7 @@ function eventSummary(e) {
 }
 
 export function reportMarkdown(result, events) {
-  const lines=['# SentinelAI Incident Investigation','',`Generated: ${result.generated_at}`,`Events analyzed: ${result.event_count}`,`Risk score: ${result.score}/100 (${result.severity})`,'',
+  const lines=['# SentinelAI Incident Investigation','',`Generated: ${result.generated_at}`,`Events analyzed: ${result.event_count}`,`Events without a valid timestamp: ${result.undated_count || 0}`,`Risk score: ${result.score}/100 (${result.severity})`,'',
     '## Scope and method','Rule-based triage of supplied logs. Findings are hypotheses requiring analyst validation; no external enrichment or live endpoint action was performed.','',
     '## Findings'];
   if(!result.findings.length) lines.push('No configured detection rule matched. This does not establish that the activity is benign.');
@@ -176,6 +191,6 @@ export function reportMarkdown(result, events) {
     if(f.evidence.length>25) lines.push(`- ${f.evidence.length-25} further matching events omitted from this text report.`);
     lines.push('','Recommended validation:',...f.next_steps.map(s=>`- ${s}`));
   }
-  lines.push('','## Limitations','Rules cover selected auth, network, web, process, and transfer patterns. Missing context can cause false positives or false negatives.');
+  lines.push('','## Limitations','Rules cover selected auth, network, web, process, and transfer patterns. Missing context can cause false positives or false negatives. Events without a valid timestamp are excluded from time-window correlation.');
   return lines.join('\n');
 }
