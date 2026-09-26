@@ -17,8 +17,8 @@ export function parseLogs(text, filename = '') {
   } else if (filename.toLowerCase().endsWith('.csv') || looksLikeCSV(source)) {
     const rows = parseCSV(source);
     const headers = rows.shift()?.map(s => s.trim().replace(/^\uFEFF/, '').toLowerCase()) || [];
-    if (!headers.some(h => ['timestamp','time','@timestamp','date'].includes(h)) || !headers.some(h => ['event_type','type','action'].includes(h)))
-      throw new Error('CSV needs a timestamp and an event_type, type, or action column.');
+    if (!headers.some(h => ['timestamp','time','@timestamp','date','timecreated','time_created'].includes(h)) || !headers.some(h => ['event_type','type','action','eventid','event_id'].includes(h)))
+      throw new Error('CSV needs a timestamp and an event_type, type, action, or EventID column.');
     records = rows.filter(row => row.some(Boolean)).map((row, i) => {
       if (row.length !== headers.length) throw new Error(`CSV row ${i + 2} has ${row.length} columns; expected ${headers.length}.`);
       return Object.fromEntries(headers.map((h, column) => [h, row[column]]));
@@ -33,8 +33,8 @@ export function parseLogs(text, filename = '') {
 
 function looksLikeCSV(source) {
   const header = source.split(/\r?\n/, 1)[0].split(',').map(s => s.trim().replace(/^\uFEFF/, '').replace(/^"|"$/g, '').toLowerCase());
-  return header.length >= 2 && header.some(h => ['timestamp','time','@timestamp','date'].includes(h))
-    && header.some(h => ['event_type','type','action','source_ip','src_ip','src','ip'].includes(h));
+  return header.length >= 2 && header.some(h => ['timestamp','time','@timestamp','date','timecreated','time_created'].includes(h))
+    && header.some(h => ['event_type','type','action','eventid','event_id'].includes(h));
 }
 
 function parseCSV(text) {
@@ -58,20 +58,20 @@ function parseTextLine(line) {
   const apacheTime = line.match(/\[(\d{1,2})\/([A-Z][a-z]{2})\/(\d{4}):(\d\d:\d\d:\d\d)\s+([+-]\d{4})\]/);
   const time = apacheTime ? `${apacheTime[1]} ${apacheTime[2]} ${apacheTime[3]} ${apacheTime[4]} GMT${apacheTime[5].slice(0,3)}:${apacheTime[5].slice(3)}`
     : line.match(/^([A-Z][a-z]{2}\s+\d+\s+\d\d:\d\d:\d\d|\d{4}-\d\d-\d\d[T ][\d:.+-Z]+)/)?.[1];
-  const ip = line.match(/(?:from |src(?:_ip)?=|client=)(\d{1,3}(?:\.\d{1,3}){3})/i)?.[1] || '';
+  const ip = line.match(/(?:from |src(?:_ip)?=|client=)(\[?[0-9a-f:.]+\]?)/i)?.[1]?.replace(/^\[|\]$/g,'') || '';
   const user = line.match(/(?:for (?:invalid user )?|user(?:name)?=)([\w.@-]+)/i)?.[1] || '';
   const port = Number(line.match(/(?:port |dpt=)(\d+)/i)?.[1] || 0);
   const http = line.match(/"(GET|POST|PUT|DELETE|PATCH)\s+(\S+)\s+HTTP\/[^\"]+"\s+(\d{3})/i);
   if (/Failed password|authentication failure|login failed/i.test(line)) return {timestamp: time, event_type:'login_failed', source_ip:ip, username:user, destination_port:port, raw:line};
   if (/Accepted password|Accepted publickey|login success/i.test(line)) return {timestamp:time, event_type:'login_success', source_ip:ip, username:user, destination_port:port, raw:line};
-  if (http) return {timestamp:time, event_type:'http', source_ip:ip || line.match(/^(\d{1,3}(?:\.\d{1,3}){3})/)?.[1], method:http[1], path:http[2], status:Number(http[3]), raw:line};
+  if (http) return {timestamp:time, event_type:'http', source_ip:ip || line.match(/^(\[?[0-9a-f:.]+\]?)\s/i)?.[1]?.replace(/^\[|\]$/g,''), method:http[1], path:http[2], status:Number(http[3]), raw:line};
   if (/DPT=|port scan/i.test(line)) return {timestamp:time, event_type:'network', source_ip:ip, destination_port:port, raw:line};
   return {timestamp:time, event_type:'other', source_ip:ip, username:user, raw:line};
 }
 
 function normalize(r, i) {
   if (!r || typeof r !== 'object' || Array.isArray(r)) throw new Error(`Event ${i + 1} must be an object.`);
-  const rawTime = r.timestamp ?? r.time ?? r['@timestamp'] ?? r.date;
+  const rawTime = r.timestamp ?? r.time ?? r['@timestamp'] ?? r.date ?? r.TimeCreated ?? r.timecreated ?? r.time_created;
   const syslogTime = typeof rawTime === 'string' && /^[A-Z][a-z]{2}\s+\d+\s+\d\d:\d\d:\d\d$/.test(rawTime);
   const parsed = rawTime ? new Date(syslogTime ? `${new Date().getFullYear()} ${rawTime}` : rawTime) : null;
   let timestamp = parsed && !isNaN(+parsed) ? parsed.toISOString() : null;
@@ -87,11 +87,14 @@ function normalize(r, i) {
     auth_failure:'login_failed', authentication_failure:'login_failed', failed_login:'login_failed', login_failure:'login_failed',
     auth_success:'login_success', authentication_success:'login_success', successful_login:'login_success', login_succeeded:'login_success'
   };
+  const windowsEventId = Number(r.event_id ?? r.EventID ?? r.eventId ?? r.eventid);
+  const windowsAuthType = [4624,4625].includes(windowsEventId) && ['other','windows_security','security'].includes(type)
+    ? (windowsEventId===4624?'login_success':'login_failed') : null;
   return {
-    id: i + 1, timestamp, type: type === 'login' ? (success ? 'login_success' : 'login_failed') : authType[type] || type,
-    source_ip: String(r.source_ip ?? r.src_ip ?? r.src ?? r.ip ?? '').slice(0,80),
+    id: i + 1, timestamp, type: windowsAuthType || (type === 'login' ? (success ? 'login_success' : 'login_failed') : authType[type] || type),
+    source_ip: String(r.source_ip ?? r.src_ip ?? r.src ?? r.ip ?? r.IpAddress ?? r.ipaddress ?? r.ip_address ?? '').slice(0,80),
     destination_ip: String(r.destination_ip ?? r.dst_ip ?? r.dst ?? '').slice(0,80),
-    username: String(r.username ?? r.user ?? '').slice(0,100),
+    username: String(r.username ?? r.user ?? r.TargetUserName ?? r.targetusername ?? r.target_user_name ?? '').slice(0,100),
     destination_port: Number(r.destination_port ?? r.dst_port ?? r.port ?? 0) || 0,
     process_name: String(r.process_name ?? r.process ?? r.command ?? '').slice(0,250),
     bytes_sent: Number(r.bytes_sent ?? r.bytes_out ?? 0) || 0,
@@ -151,7 +154,8 @@ export function investigate(events) {
   const rank={critical:4,high:3,medium:2,low:1};
   findings.sort((a,b)=>rank[b.severity]-rank[a.severity] || (a.first_seen || '').localeCompare(b.first_seen || ''));
   const score=Math.min(100,findings.reduce((n,f)=>n+({critical:45,high:27,medium:15,low:7}[f.severity]||0),0));
-  return {generated_at:new Date().toISOString(),event_count:events.length,undated_count:events.filter(e=>!e.timestamp).length,findings,score,
+  return {generated_at:new Date().toISOString(),event_count:events.length,undated_count:events.filter(e=>!e.timestamp).length,
+    unrecognized_count:events.filter(e=>e.type==='other').length,findings,score,
     severity:score>=70?'critical':score>=40?'high':score>=15?'medium':'low',
     timeline:ordered.map(e=>({id:e.id,timestamp:e.timestamp,type:e.type,source:e.source_ip||e.username||'unknown',summary:eventSummary(e)}))};
 }
@@ -181,7 +185,7 @@ function eventSummary(e) {
 }
 
 export function reportMarkdown(result, events) {
-  const lines=['# SentinelAI Incident Investigation','',`Generated: ${result.generated_at}`,`Events analyzed: ${result.event_count}`,`Events without a valid timestamp: ${result.undated_count || 0}`,`Risk score: ${result.score}/100 (${result.severity})`,'',
+  const lines=['# SentinelAI Incident Investigation','',`Generated: ${result.generated_at}`,`Events analyzed: ${result.event_count}`,`Events without a valid timestamp: ${result.undated_count || 0}`,`Events with an unrecognized type: ${result.unrecognized_count || 0}`,`Risk score: ${result.score}/100 (${result.severity})`,'',
     '## Scope and method','Rule-based triage of supplied logs. Findings are hypotheses requiring analyst validation; no external enrichment or live endpoint action was performed.','',
     '## Findings'];
   if(!result.findings.length) lines.push('No configured detection rule matched. This does not establish that the activity is benign.');
@@ -192,6 +196,6 @@ export function reportMarkdown(result, events) {
     if(f.evidence.length>25) lines.push(`- ${f.evidence.length-25} further matching events omitted from this text report.`);
     lines.push('','Recommended validation:',...f.next_steps.map(s=>`- ${s}`));
   }
-  lines.push('','## Limitations','Rules cover selected auth, network, web, process, and transfer patterns. Missing context can cause false positives or false negatives. Events without a valid timestamp are excluded from time-window correlation.');
+  lines.push('','## Limitations','Rules cover selected auth, network, web, process, and transfer patterns. Missing context can cause false positives or false negatives. Events without a valid timestamp are excluded from time-window correlation. Unrecognized event types remain in the timeline; standalone process and transfer fields can still match.');
   return lines.join('\n');
 }
