@@ -7,6 +7,7 @@ test('limits external context and rejects malformed records',()=>{
   assert.throws(()=>validateBriefRequest({findings:[],events:Array(41).fill({})}),/limit/);
   assert.throws(()=>validateBriefRequest({findings:[null],events:[{id:1}]}),/invalid/);
   assert.throws(()=>validateBriefRequest({findings:[],events:[]}),/at least one event/);
+  assert.throws(()=>validateBriefRequest({findings:[],events:[{id:1},{id:1}]}),/duplicate event IDs/);
   assert.equal(context.events[0].id,1);
   const filtered=validateBriefRequest({findings:[{id:'F-001',evidence:[1,99]}],events:[{id:1}]});
   assert.deepEqual(filtered.findings[0].evidence,[1]);
@@ -24,4 +25,10 @@ test('makes a non-stored structured Responses request and validates cited eviden
 test('reports API quota failure without treating it as a valid brief',async()=>{
   const mock=async()=>({ok:false,status:429,json:async()=>({error:{message:'quota'}})});
   await assert.rejects(createAnalystBrief(context,'test-key',mock),/rate limit or quota/);
+});
+test('rejects empty and malformed AI output',async()=>{
+  const empty=async()=>({ok:true,json:async()=>({output:[]})});
+  await assert.rejects(createAnalystBrief(context,'test-key',empty),/no analyst text/);
+  const malformed=async()=>({ok:true,json:async()=>({output:[{type:'message',content:[{type:'output_text',text:'{"assessment":42}'}]}]})});
+  await assert.rejects(createAnalystBrief(context,'test-key',malformed),/incomplete analyst brief/);
 });
