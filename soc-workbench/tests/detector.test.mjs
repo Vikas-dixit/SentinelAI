@@ -26,7 +26,13 @@ test('parses SSH auth text and rejects malformed JSON lines',()=>{
   const logs=`Sep 26 06:00:00 host sshd[1]: Failed password for admin from 203.0.113.4 port 22 ssh2\nSep 26 06:00:01 host sshd[1]: Accepted password for admin from 203.0.113.4 port 22 ssh2`;
   const events=parseLogs(logs,'auth.log');
   assert.deepEqual(events.map(e=>e.type),['login_failed','login_success']);
+  assert.equal(new Date(events[0].timestamp).getUTCFullYear(),new Date().getUTCFullYear());
   assert.throws(()=>parseLogs('{"event_type":"login"}\nnot-json','events.jsonl'),/line 2/);
+});
+test('retains Apache access log timestamp and request path',()=>{
+  const events=parseLogs('203.0.113.4 - - [26/Sep/2026:06:00:00 +0000] "GET /admin HTTP/1.1" 404 123','access.log');
+  assert.equal(events[0].timestamp,'2026-09-26T06:00:00.000Z');
+  assert.equal(events[0].path,'/admin');
 });
 test('eight destination ports in five minutes produce one network finding',()=>{
   const records=Array.from({length:8},(_,i)=>({timestamp:t(i/4),event_type:'network',source_ip:'198.51.100.7',destination_port:20+i}));
