@@ -102,3 +102,31 @@ test('parses Windows Security CSV with reordered columns',()=>{
   assert.equal(events[0].source_ip,'203.0.113.44');
   assert.equal(events[0].timestamp,t(0));
 });
+test('correlation respects the window boundary and finds later clusters',()=>{
+  const base=Date.UTC(2026,8,26,6,0);
+  const at=ms=>new Date(base+ms).toISOString();
+  const failures=[0,4,8,12,15,31].map(minutes=>({timestamp:at(minutes*60_000),event_type:'login_failed',source_ip:'203.0.113.99'}));
+  const atBoundary=investigate(parseLogs(JSON.stringify(failures.slice(0,5))));
+  assert.equal(atBoundary.findings[0].rule,'AUTH-001');
+  const outside=failures.slice(0,5).map((e,i)=>i===4?{...e,timestamp:at(15*60_000+1)}:e);
+  assert.equal(investigate(parseLogs(JSON.stringify(outside))).findings.length,0);
+  const scan=[...Array.from({length:8},(_,i)=>({timestamp:at(i*6*60_000),event_type:'network',source_ip:'198.51.100.55',destination_port:20+i})),
+    ...Array.from({length:8},(_,i)=>({timestamp:at(60*60_000+i*10_000),event_type:'network',source_ip:'198.51.100.55',destination_port:100+i}))];
+  const result=investigate(parseLogs(JSON.stringify(scan)));
+  assert.equal(result.findings[0].rule,'NET-002');
+  assert.deepEqual(result.findings[0].evidence,Array.from({length:8},(_,i)=>i+9));
+});
+test('handles 5,000 nonmatching network events',()=>{
+  const records=Array.from({length:5000},(_,i)=>({timestamp:new Date(Date.UTC(2026,8,26,6)+i*1000).toISOString(),event_type:'network',source_ip:'198.51.100.9',destination_port:443}));
+  const result=investigate(parseLogs(JSON.stringify(records)));
+  assert.equal(result.event_count,5000);
+  assert.equal(result.findings.length,0);
+});
+test('exports evidence for a large batch of standalone findings',()=>{
+  const records=Array.from({length:1000},(_,i)=>({timestamp:new Date(Date.UTC(2026,8,26,6)+i*1000).toISOString(),event_type:'transfer',source_ip:'10.0.0.1',bytes_sent:50_000_000}));
+  const events=parseLogs(JSON.stringify(records));
+  const result=investigate(events);
+  assert.equal(result.findings.length,1000);
+  const report=reportMarkdown(result,events);
+  assert.match(report,/Event 1000 \[/);
+});
