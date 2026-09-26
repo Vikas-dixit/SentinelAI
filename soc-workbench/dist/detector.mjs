@@ -44,7 +44,9 @@ function parseCSV(text) {
 }
 
 function parseTextLine(line) {
-  const time = line.match(/^([A-Z][a-z]{2}\s+\d+\s+\d\d:\d\d:\d\d|\d{4}-\d\d-\d\d[T ][\d:.+-Z]+)/)?.[1];
+  const apacheTime = line.match(/\[(\d{1,2})\/([A-Z][a-z]{2})\/(\d{4}):(\d\d:\d\d:\d\d)\s+([+-]\d{4})\]/);
+  const time = apacheTime ? `${apacheTime[1]} ${apacheTime[2]} ${apacheTime[3]} ${apacheTime[4]} GMT${apacheTime[5].slice(0,3)}:${apacheTime[5].slice(3)}`
+    : line.match(/^([A-Z][a-z]{2}\s+\d+\s+\d\d:\d\d:\d\d|\d{4}-\d\d-\d\d[T ][\d:.+-Z]+)/)?.[1];
   const ip = line.match(/(?:from |src(?:_ip)?=|client=)(\d{1,3}(?:\.\d{1,3}){3})/i)?.[1] || '';
   const user = line.match(/(?:for (?:invalid user )?|user(?:name)?=)([\w.@-]+)/i)?.[1] || '';
   const port = Number(line.match(/(?:port |dpt=)(\d+)/i)?.[1] || 0);
@@ -59,7 +61,8 @@ function parseTextLine(line) {
 function normalize(r, i) {
   if (!r || typeof r !== 'object' || Array.isArray(r)) throw new Error(`Event ${i + 1} must be an object.`);
   const rawTime = r.timestamp ?? r.time ?? r['@timestamp'] ?? r.date;
-  const parsed = rawTime ? new Date(rawTime) : null;
+  const syslogTime = typeof rawTime === 'string' && /^[A-Z][a-z]{2}\s+\d+\s+\d\d:\d\d:\d\d$/.test(rawTime);
+  const parsed = rawTime ? new Date(syslogTime ? `${new Date().getFullYear()} ${rawTime}` : rawTime) : null;
   let timestamp = parsed && !isNaN(+parsed) ? parsed.toISOString() : null;
   // Syslog timestamps omit a year. Use the current year for display only.
   if (rawTime && isNaN(Date.parse(rawTime))) {
