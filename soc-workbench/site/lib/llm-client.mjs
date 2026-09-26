@@ -28,6 +28,7 @@ export function validateBriefRequest(body) {
   })).filter(e=>Number.isInteger(e.id));
   if (!safeEvents.length) throw new Error('AI review needs at least one event with a valid ID.');
   const allowedIds=new Set(safeEvents.map(e=>e.id));
+  if (allowedIds.size!==safeEvents.length) throw new Error('AI review contains duplicate event IDs.');
   for (const finding of safeFindings) finding.evidence=finding.evidence.filter(id=>allowedIds.has(id));
   const bytes = JSON.stringify({findings:safeFindings,events:safeEvents});
   if (bytes.length > 20_000) throw new Error('Investigation context is too large for one AI review.');
