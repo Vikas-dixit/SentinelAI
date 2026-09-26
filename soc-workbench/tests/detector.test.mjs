@@ -210,3 +210,15 @@ test('success after the fifth failure is retained even if another failure follow
   assert.deepEqual(result.findings[0].evidence,[1,2,3,4,5,6]);
   assert.equal(result.findings[0].last_seen,t(5));
 });
+test('separate authentication and port-sweep bursts produce separate findings',()=>{
+  const base=Date.UTC(2026,8,26,6);
+  const at=minute=>new Date(base+minute*60_000).toISOString();
+  const auth=[...Array.from({length:5},(_,i)=>({timestamp:at(i),event_type:'login_failed',source_ip:'203.0.113.10'})),
+    ...Array.from({length:5},(_,i)=>({timestamp:at(60+i),event_type:'login_failed',source_ip:'203.0.113.10'}))];
+  const authFindings=investigate(parseLogs(JSON.stringify(auth))).findings;
+  assert.equal(authFindings.filter(f=>f.rule==='AUTH-001').length,2);
+  assert.deepEqual(authFindings.map(f=>f.evidence),[[1,2,3,4,5],[6,7,8,9,10]]);
+  const scans=[...Array.from({length:8},(_,i)=>({timestamp:at(i/10),event_type:'network',source_ip:'198.51.100.1',destination_port:20+i})),
+    ...Array.from({length:8},(_,i)=>({timestamp:at(60+i/10),event_type:'network',source_ip:'198.51.100.1',destination_port:100+i}))];
+  assert.equal(investigate(parseLogs(JSON.stringify(scans))).findings.filter(f=>f.rule==='NET-002').length,2);
+});
