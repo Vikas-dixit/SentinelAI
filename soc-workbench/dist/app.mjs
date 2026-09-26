@@ -33,7 +33,7 @@ function analyze() {
     current={...current,events,result,selected:result.findings[0]?.id||null,aiBrief:null};
     render();
     $('ai-brief').replaceChildren();
-    $('input-meta').textContent=`${events.length} events parsed · ${result.findings.length} findings${result.undated_count?` · ${result.undated_count} undated (excluded from time-window rules)`:''}${result.unrecognized_count?` · ${result.unrecognized_count} unrecognized event types`:''}`;
+    $('input-meta').textContent=`${events.length} events parsed · ${result.findings.length} findings${result.undated_count?` · ${result.undated_count} undated (excluded from time-window rules)`:''}${result.unknown_outcome_count?` · ${result.unknown_outcome_count} logins with unknown outcome`:''}${result.unrecognized_count?` · ${result.unrecognized_count} unrecognized event types`:''}`;
   } catch(err) {setError(`${err instanceof Error?err.message:'Could not read the supplied logs.'} Previous results, if any, are still displayed.`);}
 }
 function render() {
@@ -108,7 +108,7 @@ function download(name,data,type) {
 function setFile(file) {
   if(!file) return;
   if(file.size>2*1024*1024){setError('Choose a file under 2 MB.');return;}
-  if(!/\.(json|jsonl|csv|log|txt)$/i.test(file.name)){setError('Supported files: JSON, JSONL, CSV, LOG and TXT.');return;}
+  if(!/\.(json|jsonl|ndjson|csv|log|txt)$/i.test(file.name)){setError('Supported files: JSON, JSONL, NDJSON, CSV, LOG and TXT.');return;}
   const reader=new FileReader();
   reader.onload=()=>{text.value=String(reader.result||'');current.filename=file.name;$('file-name').textContent=file.name;$('input-meta').textContent=`${file.name} · ${Math.round(file.size/1024)} KB`;setActive('file-btn');setError('');analyze();};
   reader.onerror=()=>setError('Could not read this file.');reader.readAsText(file);
