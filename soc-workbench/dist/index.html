@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0c1724">
+  <meta name="description" content="SentinelAI SOC investigation workbench for defensive log triage and incident reporting.">
+  <title>SentinelAI · SOC Workbench</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./app.mjs"></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail" aria-label="Workspace navigation">
+      <div class="brand-mark" aria-hidden="true">S<span>·</span></div>
+      <div class="rail-label">SENTINEL<span>AI</span></div>
+      <div class="rail-separator"></div>
+      <div class="rail-item active"><span class="rail-icon">◈</span><span>Investigate</span></div>
+      <div class="rail-note">DEFENSIVE LAB<br>WORKSPACE</div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="breadcrumb">Workspace <span>/</span> Investigation</div>
+        <div class="private-pill"><span class="status-dot"></span> Local analysis · no external AI API</div>
+      </header>
+      <div class="content">
+        <div class="page-heading">
+          <div><div class="eyebrow">SECURITY OPERATIONS / TRIAGE</div><h1>Incident investigation</h1><p>Bring in security events. Review linked evidence, validate findings, and export a report.</p></div>
+          <div class="heading-actions"><button class="button subtle" id="download-json" disabled>Export JSON</button><button class="button dark" id="download-report" disabled>Export report</button></div>
+        </div>
+
+        <section class="workspace-grid" aria-label="Investigation workspace">
+          <div class="left-stack">
+            <section class="panel input-panel">
+              <div class="panel-heading"><div><h2>Event source</h2><p>JSON, JSONL, CSV, SSH auth.log, or common web access logs</p></div><span class="step">01 / INPUT</span></div>
+              <div class="source-tabs" role="group" aria-label="Input source"><button class="tab current" id="sample-btn" type="button">Sample incident</button><button class="tab" id="file-btn" type="button">Upload file</button><button class="tab" id="paste-btn" type="button">Paste logs</button></div>
+              <input id="file-input" type="file" accept=".json,.jsonl,.csv,.log,.txt" hidden>
+              <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Choose log file"><div class="drop-icon">⇧</div><strong>Drop a log file here</strong><span>or choose a file · max 2 MB / 5,000 events</span></div>
+              <label class="input-label" for="logs">INPUT PREVIEW <span id="file-name">sample-incident.json</span></label>
+              <textarea id="logs" spellcheck="false" aria-label="Security event logs"></textarea>
+              <div class="input-footer"><span id="input-meta">Sample data, safe to explore</span><button class="button accent" id="analyze-btn">Run investigation <span>↗</span></button></div>
+              <p class="error" id="error" role="alert" hidden></p>
+            </section>
+            <section class="panel timeline-panel">
+              <div class="panel-heading"><div><h2>Event timeline</h2><p>Normalized events in time order</p></div><span class="step" id="timeline-count">0 EVENTS</span></div>
+              <div class="timeline" id="timeline"></div>
+            </section>
+          </div>
+          <div class="right-stack">
+            <section class="metrics" aria-label="Investigation summary">
+              <div class="metric"><span>RISK SCORE</span><strong id="risk-score">—</strong><small>Rule-based estimate / 100</small></div>
+              <div class="metric"><span>FINDINGS</span><strong id="finding-count">—</strong><small>Patterns needing review</small></div>
+              <div class="metric"><span>EVENTS</span><strong id="event-count">—</strong><small>Successfully parsed</small></div>
+            </section>
+            <section class="panel findings-panel">
+              <div class="panel-heading"><div><h2>Findings</h2><p>Choose one to inspect its evidence</p></div><span class="step">02 / TRIAGE</span></div>
+              <div class="finding-list" id="findings"></div>
+            </section>
+            <section class="panel detail-panel" id="detail-panel">
+              <div class="panel-heading"><div><h2>Analyst brief</h2><p>Detection rationale and next steps</p></div><span class="step">03 / REVIEW</span></div>
+              <div id="detail" class="detail-empty">Run an investigation to see evidence and recommended checks.</div>
+            </section>
+          </div>
+        </section>
+        <footer>SentinelAI analyzes only the data you provide in this browser. Treat findings as leads and verify them before taking action. Avoid uploading secrets or production logs to a shared device.</footer>
+      </div>
+    </main>
+  </div>
+</body>
+</html>
