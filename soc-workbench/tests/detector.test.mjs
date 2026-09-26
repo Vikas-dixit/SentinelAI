@@ -71,3 +71,7 @@ test('CSV rejects malformed rows and missing required fields',()=>{
   assert.throws(()=>parseLogs(`timestamp,event_type,source_ip\n${t(0)},network`,'events.csv'),/row 2 has 2 columns/);
   assert.throws(()=>parseLogs('source_ip,bytes_sent\n10.0.0.1,50000000','events.csv'),/needs a timestamp/);
 });
+test('events without source identity cannot form a shared time-window alert',()=>{
+  const records=Array.from({length:8},(_,i)=>({timestamp:t(i/4),event_type:'network',destination_port:20+i}));
+  assert.equal(investigate(parseLogs(JSON.stringify(records))).findings.length,0);
+});
