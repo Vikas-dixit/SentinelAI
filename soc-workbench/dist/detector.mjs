@@ -158,24 +158,23 @@ export function investigate(events) {
   }
   for (const [source, items] of groups) {
     const failures = items.filter(e => e.timestamp && e.type === 'login_failed');
-    const cluster = rollingCluster(failures,15*MINUTE,5);
-    if (cluster) {
+    const usedSuccesses=new Set();
+    for(const cluster of rollingClusters(failures,15*MINUTE,5)) {
       const thresholdTime=Date.parse(cluster[4].timestamp);
-      const laterSuccess = items.find(e => e.timestamp && e.type === 'login_success' && Date.parse(e.timestamp) >= thresholdTime && Date.parse(e.timestamp) - thresholdTime <= 30*MINUTE);
+      const laterSuccess = items.find(e => e.timestamp && e.type === 'login_success' && !usedSuccesses.has(e.id) && Date.parse(e.timestamp) >= thresholdTime && Date.parse(e.timestamp) - thresholdTime <= 30*MINUTE);
+      if(laterSuccess) usedSuccesses.add(laterSuccess.id);
       const supportingFailures=laterSuccess?cluster.filter(e=>Date.parse(e.timestamp)<=Date.parse(laterSuccess.timestamp)):cluster;
       add('AUTH-001',laterSuccess?'Successful login after repeated failures':'Repeated authentication failures',laterSuccess?'critical':'high',laterSuccess?'high':'medium',laterSuccess?[...supportingFailures,laterSuccess]:cluster,
         `${source} produced ${supportingFailures.length} failed logins in 15 minutes${laterSuccess?' followed by a successful login':''}. This pattern warrants account and source review.`,
         ['Validate whether the source and account activity were authorized.','Review related authentication events and reset credentials if compromise is confirmed.','Apply rate limiting or MFA where appropriate.'],'Credential Access');
     }
     const network = items.filter(e=>e.timestamp && e.source_ip && e.destination_port>0 && ['network','connection','firewall'].includes(e.type));
-    const ports = rollingDistinctPorts(network,5*MINUTE,8);
-    if (ports) add('NET-002','Multi-port connection sweep','high','medium',ports,
+    for(const ports of rollingDistinctPortClusters(network,5*MINUTE,8)) add('NET-002','Multi-port connection sweep','high','medium',ports,
       `${source} contacted ${new Set(ports.map(e=>e.destination_port)).size} distinct ports within five minutes.`,
       ['Confirm whether this is an approved scanner.','Review firewall and endpoint logs for follow-on access.','Restrict the source if unauthorized.'],'Discovery');
     const web = items.filter(e=>e.timestamp && e.source_ip && e.type==='http');
     const probes = web.filter(e=>/\b(401|403|404|500)\b/.test(String(e.status)) || /(\.\.|%2e|union(?:%20|\+| )select|<script|%3cscript|\/admin|\/\.env)/i.test(e.path));
-    const webCluster = rollingCluster(probes,10*MINUTE,5);
-    if (webCluster) add('WEB-003','Repeated web probing','medium','medium',webCluster,
+    for(const webCluster of rollingClusters(probes,10*MINUTE,5)) add('WEB-003','Repeated web probing','medium','medium',webCluster,
       `${source} generated ${webCluster.length} error or suspicious-path requests in ten minutes.`,
       ['Inspect requested paths and response bodies.','Check WAF and application logs for exploit evidence.','Block only after validating the source is unauthorized.'],'Reconnaissance');
   }
@@ -205,30 +204,34 @@ export function investigate(events) {
     timeline:ordered.map(e=>({id:e.id,timestamp:e.timestamp,type:e.type,source:e.source_ip||e.username||'unknown',summary:eventSummary(e)}))};
 }
 
-function rollingCluster(items,windowMs,min) {
+function rollingClusters(items,windowMs,min) {
+  const clusters=[];
   let end=0;
-  for (let start=0;start<items.length;start++) {
+  for (let start=0;start<items.length;) {
     if(end<start) end=start;
     while(end<items.length && Date.parse(items[end].timestamp)-Date.parse(items[start].timestamp)<=windowMs) end++;
-    if(end-start>=min) return items.slice(start,end);
+    if(end-start>=min) { clusters.push(items.slice(start,end)); start=end; }
+    else start++;
   }
-  return null;
+  return clusters;
 }
-function rollingDistinctPorts(items,windowMs,min) {
+function rollingDistinctPortClusters(items,windowMs,min) {
+  const clusters=[];
   let end=0;
   const counts=new Map();
-  for(let start=0;start<items.length;start++) {
+  for(let start=0;start<items.length;) {
     while(end<items.length && Date.parse(items[end].timestamp)-Date.parse(items[start].timestamp)<=windowMs) {
       const port=items[end].destination_port;
       counts.set(port,(counts.get(port)||0)+1);
       end++;
     }
-    if(counts.size>=min) return items.slice(start,end);
+    if(counts.size>=min) { clusters.push(items.slice(start,end)); start=end; counts.clear(); continue; }
     const port=items[start].destination_port;
     const next=counts.get(port)-1;
     if(next) counts.set(port,next); else counts.delete(port);
+    start++;
   }
-  return null;
+  return clusters;
 }
 function eventSummary(e) {
   if(e.type==='http') return `${e.method||'HTTP'} ${e.path||'/'} → ${e.status||'?'}`;
