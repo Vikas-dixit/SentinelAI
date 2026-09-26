@@ -39,6 +39,14 @@ test('eight destination ports in five minutes produce one network finding',()=>{
   const result=investigate(parseLogs(JSON.stringify(records)));
   assert.equal(result.findings[0].rule,'NET-002');
 });
+test('web probing needs five suspicious requests from one source in ten minutes',()=>{
+  const probes=Array.from({length:5},(_,i)=>({timestamp:t(i),event_type:'http',source_ip:'192.0.2.55',method:'GET',path:i%2?'/admin':'/.env',status:404}));
+  const result=investigate(parseLogs(JSON.stringify(probes)));
+  assert.equal(result.findings[0].rule,'WEB-003');
+  assert.equal(result.findings[0].evidence.length,5);
+  const benign=Array.from({length:5},(_,i)=>({...probes[i],path:'/health',status:200}));
+  assert.equal(investigate(parseLogs(JSON.stringify(benign))).findings.length,0);
+});
 test('undated authentication events cannot fabricate a correlated incident',()=>{
   const records=Array.from({length:6},()=>({event_type:'auth_failure',source_ip:'203.0.113.10',username:'admin'}));
   const events=parseLogs(JSON.stringify(records));
@@ -80,6 +88,9 @@ test('parses IPv6 source addresses in SSH and web access logs',()=>{
   const web=parseLogs('2001:db8::42 - - [26/Sep/2026:06:00:00 +0000] "GET /admin HTTP/1.1" 404 123','access.log');
   assert.equal(ssh[0].source_ip,'2001:db8::42');
   assert.equal(web[0].source_ip,'2001:db8::42');
+  assert.equal(parseLogs('Sep 26 06:00:00 host sshd[1]: Failed password for admin from badhost port 22 ssh2','auth.log')[0].source_ip,'');
+  assert.equal(parseLogs('Sep 26 06:00:00 host sshd[1]: Failed password for admin from bad:port port 22 ssh2','auth.log')[0].source_ip,'');
+  assert.equal(parseLogs('999.999.999.999 - - [26/Sep/2026:06:00:00 +0000] "GET /admin HTTP/1.1" 404 123','access.log')[0].source_ip,'');
 });
 test('unrecognized text remains visible with an explicit coverage count',()=>{
   const events=parseLogs('Sep 26 06:00:00 host customd[1]: unrelated event','custom.log');
@@ -101,6 +112,24 @@ test('parses Windows Security CSV with reordered columns',()=>{
   assert.equal(events[0].type,'login_failed');
   assert.equal(events[0].source_ip,'203.0.113.44');
   assert.equal(events[0].timestamp,t(0));
+});
+test('maps nested ECS authentication, web, network, and process fields',()=>{
+  const auth=[...Array.from({length:5},(_,i)=>({'@timestamp':t(i),event:{category:['authentication'],action:'user_login',outcome:'failure'},source:{ip:'203.0.113.66'},user:{name:'admin'}})),
+    {'@timestamp':t(6),event:{category:['authentication'],action:'user_login',outcome:'success'},source:{ip:'203.0.113.66'},user:{name:'admin'}}];
+  const events=parseLogs(JSON.stringify(auth));
+  assert.equal(events[0].type,'login_failed');
+  assert.equal(events[0].username,'admin');
+  assert.equal(investigate(events).findings[0].severity,'critical');
+  const nested=parseLogs(JSON.stringify([
+    {'@timestamp':t(0),event:{category:['network']},source:{ip:'192.0.2.1'},destination:{ip:'10.0.0.1',port:443}},
+    {'@timestamp':t(1),event:{category:['web']},source:{ip:'192.0.2.1'},http:{request:{method:'GET'},response:{status_code:404}},url:{path:'/.env'}},
+    {'@timestamp':t(2),process:{command_line:'powershell.exe -EncodedCommand AAAA'}}
+  ]));
+  assert.equal(nested[0].type,'network');
+  assert.equal(nested[0].destination_port,443);
+  assert.equal(nested[1].type,'http');
+  assert.equal(nested[1].path,'/.env');
+  assert.equal(nested[2].process_name,'powershell.exe -EncodedCommand AAAA');
 });
 test('correlation respects the window boundary and finds later clusters',()=>{
   const base=Date.UTC(2026,8,26,6,0);
