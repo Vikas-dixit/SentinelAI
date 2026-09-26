@@ -1,16 +1,22 @@
 # SentinelAI SOC Workbench
 
-A defensive investigation workbench built for Vikas Dixit's SentinelAI portfolio. It parses JSON, JSONL, CSV, SSH auth logs, and common web access logs; correlates authentication, port sweep, web probing, suspicious command, and large transfer patterns; presents a timeline and evidence; and exports Markdown or JSON investigation reports.
+A defensive log investigation workbench for Vikas Dixit's SentinelAI portfolio. It parses JSON, JSONL, CSV, SSH auth logs, and common web access logs; correlates authentication, port sweep, web probing, suspicious command, and large transfer patterns; shows evidence and a timeline; and exports Markdown or JSON reports.
 
-## Run locally
+## Deployed app
 
-The `dist/` directory is a static application. Serve it with any local HTTP server:
+The owner-private app runs at https://sentinelai-soc-vikas.dixitvikas057.chatgpt.site. It opens with a safe sample investigation. Use **Upload file** or **Paste logs** for your own data. Supported input is up to 2 MB and 5,000 events. Local rule-based triage works without an API key.
+
+The optional **Ask external AI** action sends a bounded selection of findings and event excerpts to OpenAI's Responses API for a cautious analyst brief. The key is read only by the server from `OPENAI_API_KEY`; it is never embedded in browser code. This feature becomes available only when that secret is configured for the deployed Site. OpenAI Platform API billing is separate from ChatGPT Plus. The API request uses `gpt-5.6-luna`, `store: false`, a strict JSON schema, and a 25-second timeout. AI output is a hypothesis and cites only event IDs supplied in the request.
+
+## Local rule engine
+
+Serve the standalone `dist/` folder with any HTTP server:
 
 ```bash
 python3 -m http.server 8080 -d dist
 ```
 
-Open `http://localhost:8080`. It opens with a safe sample investigation. Use **Upload file** or **Paste logs** for your own data. Supported input is up to 2 MB and 5,000 events. Run the focused detection tests with `node --test tests/*.test.mjs` (Node 20+).
+Open `http://localhost:8080`. This mode runs local triage and exports; the optional AI button reports that the server route is unavailable. Run tests with `node --test tests/*.test.mjs` (Node 20+). The `site/` folder contains the server-side AI route and client used for the deployed version.
 
 ## Input fields
 
@@ -26,8 +32,4 @@ Normalized event fields include `timestamp`, `event_type`, `source_ip`, `destina
 | DATA-004 | At least 50 MB in one outbound event | Size alone is weak evidence |
 | PROC-005 | Selected encoded PowerShell or download-and-execute command patterns | Capture process tree before response |
 
-The engine runs in the browser. Files are read locally and are not uploaded to an AI provider or stored on a server. The deployed site is private to its owner. Exported reports contain excerpts of supplied logs, so handle them as sensitive investigation data. Findings are leads, not proof of compromise. No live endpoint actions are taken.
-
-## Architecture
-
-`index.html` renders the triage workspace, `app.mjs` handles file input and visualization, and `detector.mjs` contains pure parsing, correlation, and report functions. This workbench complements the FastAPI event scoring service in the root of the SentinelAI repository; it does not claim to be connected to a running backend.
+The rule engine runs in the browser. Files are not uploaded during local triage. Clicking **Ask external AI** explicitly transmits selected evidence excerpts to OpenAI; remove sensitive data first. The deployed Site is private to its owner. Exported reports can contain excerpts of supplied logs, so handle them as sensitive investigation data. No live endpoint actions or SIEM ingestion are performed. Findings are leads, not proof of compromise.
