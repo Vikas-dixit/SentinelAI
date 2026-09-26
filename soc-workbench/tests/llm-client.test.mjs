@@ -5,8 +5,11 @@ import {validateBriefRequest,createAnalystBrief} from '../site/lib/llm-client.mj
 const context=validateBriefRequest({findings:[{id:'F-001',rule:'AUTH-001',title:'Repeated failures',severity:'high',evidence:[1]}],events:[{id:1,timestamp:'2026-09-26T06:00:00Z',type:'login_failed',source_ip:'203.0.113.4',raw:'Failed password from 203.0.113.4'}]});
 test('limits external context and rejects malformed records',()=>{
   assert.throws(()=>validateBriefRequest({findings:[],events:Array(41).fill({})}),/limit/);
-  assert.throws(()=>validateBriefRequest({findings:[null],events:[]}),/invalid/);
+  assert.throws(()=>validateBriefRequest({findings:[null],events:[{id:1}]}),/invalid/);
+  assert.throws(()=>validateBriefRequest({findings:[],events:[]}),/at least one event/);
   assert.equal(context.events[0].id,1);
+  const filtered=validateBriefRequest({findings:[{id:'F-001',evidence:[1,99]}],events:[{id:1}]});
+  assert.deepEqual(filtered.findings[0].evidence,[1]);
 });
 test('makes a non-stored structured Responses request and validates cited evidence',async()=>{
   let sent;
