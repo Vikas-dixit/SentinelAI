@@ -33,3 +33,5 @@ Normalized event fields include `timestamp`, `event_type`, `source_ip`, `destina
 | PROC-005 | Selected encoded PowerShell or download-and-execute command patterns | Capture process tree before response |
 
 The rule engine runs in the browser. Timeline and finding lists load in pages for larger investigations, while exports include the full result. Files are not uploaded during local triage. Clicking **Ask external AI** explicitly transmits selected evidence excerpts to OpenAI; remove sensitive data first. The deployed Site is private to its owner. Exported reports can contain excerpts of supplied logs, so handle them as sensitive investigation data. No live endpoint actions or SIEM ingestion are performed. Findings are leads, not proof of compromise.
+
+The overall risk score is a triage heuristic. It adds a bounded contribution per detection rule, so a long run of the same rule cannot alone reach a critical score. Validate severity and confidence against the underlying evidence.
