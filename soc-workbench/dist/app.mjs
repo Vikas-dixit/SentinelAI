@@ -1,4 +1,5 @@
 import {parseLogs, investigate, reportMarkdown} from './detector.mjs';
+import {selectAIContext} from './ai-context.mjs';
 
 const $ = id => document.getElementById(id);
 const sampleTime = Date.now() - 30 * 60_000;
@@ -136,15 +137,9 @@ async function askAI() {
   if(!current.result)return;
   const revision=investigationRevision;
   const button=$('ask-ai');button.disabled=true;button.textContent='Reviewing evidence…';$('ai-error').hidden=true;
-  const findings=current.result.findings.slice(0,20);
-  const prioritizedIds=[...new Set(findings.flatMap(f=>f.evidence))].slice(0,40);
-  const eventById=new Map(current.events.map(e=>[e.id,e]));
-  const selected=prioritizedIds.map(id=>eventById.get(id)).filter(Boolean);
-  const events=selected.length?selected:current.events.slice(0,40);
-  const sentIds=new Set(events.map(e=>e.id));
-  const contextFindings=findings.map(f=>({...f,evidence:f.evidence.filter(id=>sentIds.has(id))}));
+  const context=selectAIContext(current.result.findings,current.events);
   try {
-    const response=await fetch('/api/analyst',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({findings:contextFindings,events})});
+    const response=await fetch('/api/analyst',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(context)});
     const data=await response.json();if(!response.ok)throw new Error(data.error||`AI request failed (${response.status})`);
     if(revision!==investigationRevision)return;
     current.aiBrief=data.brief;const b=data.brief;
