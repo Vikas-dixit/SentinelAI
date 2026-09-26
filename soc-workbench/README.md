@@ -20,7 +20,7 @@ Open `http://localhost:8080`. This mode runs local triage and exports; the optio
 
 ## Input fields
 
-Normalized event fields include `timestamp`, `event_type`, `source_ip`, `destination_ip`, `username`, `destination_port`, `process_name`, `bytes_sent`, `method`, `path`, and `status`. `event_type: "login"` uses `success: true/false`. Text logs are parsed with limited SSH and access-log patterns. Unknown lines remain visible as `other` events.
+Normalized event fields include `timestamp`, `event_type`, `source_ip`, `destination_ip`, `username`, `destination_port`, `process_name`, `bytes_sent`, `method`, `path`, and `status`. `event_type: "login"` uses `success: true/false`; common authentication failure and success names are also recognized. CSV columns may appear in any order. Text logs are parsed with limited SSH and access-log patterns. Unknown lines remain visible as `other` events. Missing or invalid timestamps are displayed as unknown and excluded from time-window correlation; standalone transfer and process indicators can still match.
 
 ## Detection rules
 
