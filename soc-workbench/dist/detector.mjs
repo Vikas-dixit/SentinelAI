@@ -106,7 +106,8 @@ export function investigate(events) {
   const findings = [];
   const groups = new Map();
   for (const event of ordered) {
-    const key = event.source_ip || event.username || 'unknown-source';
+    const key = event.source_ip || event.username;
+    if (!key) continue;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(event);
   }
@@ -126,12 +127,12 @@ export function investigate(events) {
         `${source} produced ${cluster.length} failed logins in 15 minutes${laterSuccess?' followed by a successful login':''}. This pattern warrants account and source review.`,
         ['Validate whether the source and account activity were authorized.','Review related authentication events and reset credentials if compromise is confirmed.','Apply rate limiting or MFA where appropriate.'],'Credential Access');
     }
-    const network = items.filter(e=>e.timestamp && e.destination_port>0 && ['network','connection','firewall'].includes(e.type));
+    const network = items.filter(e=>e.timestamp && e.source_ip && e.destination_port>0 && ['network','connection','firewall'].includes(e.type));
     const ports = rollingDistinctPorts(network,5*MINUTE,8);
     if (ports) add('NET-002','Multi-port connection sweep','high','medium',ports,
       `${source} contacted ${new Set(ports.map(e=>e.destination_port)).size} distinct ports within five minutes.`,
       ['Confirm whether this is an approved scanner.','Review firewall and endpoint logs for follow-on access.','Restrict the source if unauthorized.'],'Discovery');
-    const web = items.filter(e=>e.timestamp && e.type==='http');
+    const web = items.filter(e=>e.timestamp && e.source_ip && e.type==='http');
     const probes = web.filter(e=>/\b(401|403|404|500)\b/.test(String(e.status)) || /(\.\.|%2e|union(?:%20|\+| )select|<script|%3cscript|\/admin|\/\.env)/i.test(e.path));
     const webCluster = rollingCluster(probes,10*MINUTE,5);
     if (webCluster) add('WEB-003','Repeated web probing','medium','medium',webCluster,
@@ -186,8 +187,8 @@ export function reportMarkdown(result, events) {
   if(!result.findings.length) lines.push('No configured detection rule matched. This does not establish that the activity is benign.');
   for(const f of result.findings) {
     lines.push('',`### ${f.id} — ${f.title}`,`Severity: ${f.severity} | Confidence: ${f.confidence} | Rule: ${f.rule} | Tactic: ${f.tactic}`,
-      `Source: ${f.source} | Window: ${f.first_seen} to ${f.last_seen}`,'',f.explanation,'','Evidence:');
-    for(const id of f.evidence.slice(0,25)) { const e=events.find(item=>item.id===id); if(e) lines.push(`- Event ${id} [${e.timestamp}]: ${e.raw.replace(/[\r\n]+/g,' ').slice(0,300)}`); }
+      `Source: ${f.source} | Window: ${f.first_seen || 'unknown'} to ${f.last_seen || 'unknown'}`,'',f.explanation,'','Evidence:');
+    for(const id of f.evidence.slice(0,25)) { const e=events.find(item=>item.id===id); if(e) lines.push(`- Event ${id} [${e.timestamp || 'time unknown'}]: ${e.raw.replace(/[\r\n]+/g,' ').slice(0,300)}`); }
     if(f.evidence.length>25) lines.push(`- ${f.evidence.length-25} further matching events omitted from this text report.`);
     lines.push('','Recommended validation:',...f.next_steps.map(s=>`- ${s}`));
   }
