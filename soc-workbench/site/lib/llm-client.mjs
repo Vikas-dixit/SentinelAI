@@ -14,6 +14,7 @@ export function validateBriefRequest(body) {
   const findings = body.findings, events = body.events;
   if (!Array.isArray(findings) || !Array.isArray(events) || findings.length > 20 || events.length > 40)
     throw new Error('Investigation exceeds the AI review limit (20 findings, 40 events).');
+  if (!events.length) throw new Error('AI review needs at least one event.');
   if(findings.some(f=>!f||typeof f!=='object'||Array.isArray(f)) || events.some(e=>!e||typeof e!=='object'||Array.isArray(e)))
     throw new Error('Investigation contains invalid records.');
   const safeFindings = findings.map(f => ({
@@ -25,6 +26,9 @@ export function validateBriefRequest(body) {
     id: Number(e.id), timestamp: String(e.timestamp||'').slice(0,40), type: String(e.type||'').slice(0,40),
     source_ip: String(e.source_ip||'').slice(0,80), raw: String(e.raw||'').slice(0,300)
   })).filter(e=>Number.isInteger(e.id));
+  if (!safeEvents.length) throw new Error('AI review needs at least one event with a valid ID.');
+  const allowedIds=new Set(safeEvents.map(e=>e.id));
+  for (const finding of safeFindings) finding.evidence=finding.evidence.filter(id=>allowedIds.has(id));
   const bytes = JSON.stringify({findings:safeFindings,events:safeEvents});
   if (bytes.length > 20_000) throw new Error('Investigation context is too large for one AI review.');
   return {findings:safeFindings,events:safeEvents};
