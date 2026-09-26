@@ -38,7 +38,7 @@ function analyze() {
   } catch(err) {setError(`${err instanceof Error?err.message:'Could not read the supplied logs.'} Previous results, if any, are still displayed.`);}
 }
 function render() {
-  const {events,result}=current;
+  const {result}=current;
   $('risk-score').textContent=String(result.score);
   $('finding-count').textContent=String(result.findings.length);
   $('event-count').textContent=String(result.event_count);
