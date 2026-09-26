@@ -161,18 +161,27 @@ export function investigate(events) {
 }
 
 function rollingCluster(items,windowMs,min) {
+  let end=0;
   for (let start=0;start<items.length;start++) {
-    let end=start;
+    if(end<start) end=start;
     while(end<items.length && Date.parse(items[end].timestamp)-Date.parse(items[start].timestamp)<=windowMs) end++;
     if(end-start>=min) return items.slice(start,end);
   }
   return null;
 }
 function rollingDistinctPorts(items,windowMs,min) {
+  let end=0;
+  const counts=new Map();
   for(let start=0;start<items.length;start++) {
-    const subset=[];const ports=new Set();
-    for(let end=start;end<items.length && Date.parse(items[end].timestamp)-Date.parse(items[start].timestamp)<=windowMs;end++) {subset.push(items[end]);ports.add(items[end].destination_port);}
-    if(ports.size>=min) return subset;
+    while(end<items.length && Date.parse(items[end].timestamp)-Date.parse(items[start].timestamp)<=windowMs) {
+      const port=items[end].destination_port;
+      counts.set(port,(counts.get(port)||0)+1);
+      end++;
+    }
+    if(counts.size>=min) return items.slice(start,end);
+    const port=items[start].destination_port;
+    const next=counts.get(port)-1;
+    if(next) counts.set(port,next); else counts.delete(port);
   }
   return null;
 }
@@ -185,6 +194,7 @@ function eventSummary(e) {
 }
 
 export function reportMarkdown(result, events) {
+  const eventById=new Map(events.map(e=>[e.id,e]));
   const lines=['# SentinelAI Incident Investigation','',`Generated: ${result.generated_at}`,`Events analyzed: ${result.event_count}`,`Events without a valid timestamp: ${result.undated_count || 0}`,`Events with an unrecognized type: ${result.unrecognized_count || 0}`,`Risk score: ${result.score}/100 (${result.severity})`,'',
     '## Scope and method','Rule-based triage of supplied logs. Findings are hypotheses requiring analyst validation; no external enrichment or live endpoint action was performed.','',
     '## Findings'];
@@ -192,7 +202,7 @@ export function reportMarkdown(result, events) {
   for(const f of result.findings) {
     lines.push('',`### ${f.id} — ${f.title}`,`Severity: ${f.severity} | Confidence: ${f.confidence} | Rule: ${f.rule} | Tactic: ${f.tactic}`,
       `Source: ${f.source} | Window: ${f.first_seen || 'unknown'} to ${f.last_seen || 'unknown'}`,'',f.explanation,'','Evidence:');
-    for(const id of f.evidence.slice(0,25)) { const e=events.find(item=>item.id===id); if(e) lines.push(`- Event ${id} [${e.timestamp || 'time unknown'}]: ${e.raw.replace(/[\r\n]+/g,' ').slice(0,300)}`); }
+    for(const id of f.evidence.slice(0,25)) { const e=eventById.get(id); if(e) lines.push(`- Event ${id} [${e.timestamp || 'time unknown'}]: ${e.raw.replace(/[\r\n]+/g,' ').slice(0,300)}`); }
     if(f.evidence.length>25) lines.push(`- ${f.evidence.length-25} further matching events omitted from this text report.`);
     lines.push('','Recommended validation:',...f.next_steps.map(s=>`- ${s}`));
   }
