@@ -13,6 +13,10 @@ const sample = [
 ];
 let current={events:[],result:null,selected:null,filename:'sample-incident.json',aiBrief:null};
 let investigationRevision=0;
+const TIMELINE_PAGE=250;
+let timelineRendered=0;
+const FINDINGS_PAGE=100;
+let findingsRendered=0;
 const text=$('logs');
 text.value=JSON.stringify(sample,null,2);
 
@@ -37,26 +41,48 @@ function render() {
   $('risk-score').textContent=String(result.score);
   $('finding-count').textContent=String(result.findings.length);
   $('event-count').textContent=String(result.event_count);
-  $('timeline-count').textContent=`${result.event_count} EVENTS`;
   $('download-report').disabled=false;$('download-json').disabled=false;
   const list=$('findings');list.replaceChildren();
+  findingsRendered=0;
   if(!result.findings.length) list.innerHTML='<div class="empty-list">No configured rule matched. Review the timeline and remember that absence of alerts does not prove safety.</div>';
-  for(const f of result.findings) {
+  appendFindingsPage();
+  $('timeline').replaceChildren();
+  timelineRendered=0;
+  appendTimelinePage();
+  renderDetail();
+}
+function appendFindingsPage() {
+  const findings=current.result.findings;
+  const fragment=document.createDocumentFragment();
+  for(const f of findings.slice(findingsRendered,findingsRendered+FINDINGS_PAGE)) {
     const button=document.createElement('button'); button.type='button';
     button.className=`finding-card ${f.severity}${f.id===current.selected?' selected':''}`;
     button.dataset.findingId=f.id;
     button.setAttribute('aria-pressed',String(f.id===current.selected));
     button.innerHTML=`<span class="finding-bar"></span><span class="finding-content"><span class="finding-top"><strong>${escapeHTML(f.title)}</strong><span class="severity">${escapeHTML(f.severity)}</span></span><p>${escapeHTML(f.source)} · ${f.evidence.length} evidence event${f.evidence.length===1?'':'s'} · ${escapeHTML(f.rule)}</p></span>`;
     button.addEventListener('click',()=>{current.selected=f.id;renderFindingsSelection();renderDetail();});
-    list.append(button);
+    fragment.append(button);
   }
-  $('timeline').replaceChildren();
-  for(const e of result.timeline) {
+  $('findings').append(fragment);
+  findingsRendered=Math.min(findingsRendered+FINDINGS_PAGE,findings.length);
+  const remaining=findings.length-findingsRendered;
+  $('findings-more').hidden=!remaining;
+  $('findings-more').textContent=`Show next ${Math.min(FINDINGS_PAGE,remaining)} findings`;
+}
+function appendTimelinePage() {
+  const timeline=current.result.timeline;
+  const fragment=document.createDocumentFragment();
+  for(const e of timeline.slice(timelineRendered,timelineRendered+TIMELINE_PAGE)) {
     const row=document.createElement('div');row.className='timeline-row';
     row.innerHTML=`<span class="timeline-time">${escapeHTML(fmt(e.timestamp))}</span><span class="timeline-main"><strong>${escapeHTML(e.type.replaceAll('_',' '))} · ${escapeHTML(e.source)}</strong><span>${escapeHTML(e.summary)}</span></span>`;
-    $('timeline').append(row);
+    fragment.append(row);
   }
-  renderDetail();
+  $('timeline').append(fragment);
+  timelineRendered=Math.min(timelineRendered+TIMELINE_PAGE,timeline.length);
+  $('timeline-count').textContent=`${timelineRendered} / ${timeline.length} EVENTS`;
+  const remaining=timeline.length-timelineRendered;
+  $('timeline-more').hidden=!remaining;
+  $('timeline-more').textContent=`Show next ${Math.min(TIMELINE_PAGE,remaining)} events`;
 }
 function renderFindingsSelection() {
   for(const button of $('findings').querySelectorAll('.finding-card')) {
@@ -96,6 +122,8 @@ $('dropzone').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.
 $('dropzone').addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';});
 $('dropzone').addEventListener('drop',e=>{e.preventDefault();setFile(e.dataTransfer.files?.[0]);});
 $('analyze-btn').addEventListener('click',analyze);
+$('timeline-more').addEventListener('click',appendTimelinePage);
+$('findings-more').addEventListener('click',appendFindingsPage);
 $('download-report').addEventListener('click',()=>{if(current.result){let report=reportMarkdown(current.result,current.events);if(current.aiBrief){report+='\n\n## External AI analyst brief\n'+current.aiBrief.assessment+'\n\nCited event IDs: '+current.aiBrief.evidence_ids.join(', ')+'\n\nUncertainties:\n'+current.aiBrief.uncertainties.map(s=>'- '+s).join('\n')+'\n\nNext steps:\n'+current.aiBrief.next_steps.map(s=>'- '+s).join('\n');}download('sentinelai-incident-report.md',report,'text/markdown');}});
 $('download-json').addEventListener('click',()=>{if(current.result)download('sentinelai-investigation.json',JSON.stringify({investigation:current.result,events:current.events,ai_brief:current.aiBrief},null,2),'application/json');});
 async function checkAI() {
@@ -108,11 +136,15 @@ async function askAI() {
   if(!current.result)return;
   const revision=investigationRevision;
   const button=$('ask-ai');button.disabled=true;button.textContent='Reviewing evidence…';$('ai-error').hidden=true;
-  const ids=new Set(current.result.findings.flatMap(f=>f.evidence));
-  const selected=current.events.filter(e=>ids.has(e.id)).slice(0,40);
+  const findings=current.result.findings.slice(0,20);
+  const prioritizedIds=[...new Set(findings.flatMap(f=>f.evidence))].slice(0,40);
+  const eventById=new Map(current.events.map(e=>[e.id,e]));
+  const selected=prioritizedIds.map(id=>eventById.get(id)).filter(Boolean);
   const events=selected.length?selected:current.events.slice(0,40);
+  const sentIds=new Set(events.map(e=>e.id));
+  const contextFindings=findings.map(f=>({...f,evidence:f.evidence.filter(id=>sentIds.has(id))}));
   try {
-    const response=await fetch('/api/analyst',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({findings:current.result.findings.slice(0,20),events})});
+    const response=await fetch('/api/analyst',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({findings:contextFindings,events})});
     const data=await response.json();if(!response.ok)throw new Error(data.error||`AI request failed (${response.status})`);
     if(revision!==investigationRevision)return;
     current.aiBrief=data.brief;const b=data.brief;
