@@ -34,9 +34,9 @@
         <section class="workspace-grid" aria-label="Investigation workspace">
           <div class="left-stack">
             <section class="panel input-panel">
-              <div class="panel-heading"><div><h2>Event source</h2><p>JSON, JSONL, CSV, SSH auth.log, or common web access logs</p></div><span class="step">01 / INPUT</span></div>
+              <div class="panel-heading"><div><h2>Event source</h2><p>JSON, JSONL/NDJSON, CSV, SSH auth.log, or common web access logs</p></div><span class="step">01 / INPUT</span></div>
               <div class="source-tabs" role="group" aria-label="Input source"><button class="tab current" id="sample-btn" type="button">Sample incident</button><button class="tab" id="file-btn" type="button">Upload file</button><button class="tab" id="paste-btn" type="button">Paste logs</button></div>
-              <input id="file-input" type="file" accept=".json,.jsonl,.csv,.log,.txt" hidden>
+              <input id="file-input" type="file" accept=".json,.jsonl,.ndjson,.csv,.log,.txt" hidden>
               <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Choose log file"><div class="drop-icon">⇧</div><strong>Drop a log file here</strong><span>or choose a file · max 2 MB / 5,000 events</span></div>
               <label class="input-label" for="logs">INPUT PREVIEW <span id="file-name">sample-incident.json</span></label>
               <textarea id="logs" spellcheck="false" aria-label="Security event logs"></textarea>
