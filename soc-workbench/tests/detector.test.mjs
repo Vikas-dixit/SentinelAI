@@ -16,6 +16,15 @@ test('does not merge separate sources into brute force',()=>{
   const records=Array.from({length:6},(_,i)=>({timestamp:t(i),event_type:'login_failed',source_ip:`203.0.113.${i+1}`}));
   assert.equal(investigate(parseLogs(JSON.stringify(records))).findings.length,0);
 });
+test('login records without an outcome cannot become failed logins',()=>{
+  const records=Array.from({length:6},(_,i)=>({timestamp:t(i),event_type:'login',source_ip:'203.0.113.10'}));
+  const events=parseLogs(JSON.stringify(records));
+  const result=investigate(events);
+  assert.equal(events[0].type,'login_unknown');
+  assert.equal(result.unknown_outcome_count,6);
+  assert.equal(result.findings.length,0);
+  assert.match(reportMarkdown(result,events),/Login events with unknown outcome: 6/);
+});
 test('parses quoted CSV and finds a large transfer',()=>{
   const csv=`timestamp,event_type,source_ip,bytes_sent,path\n${t(0)},transfer,10.0.0.1,60000000,"/a,b"`;
   const events=parseLogs(csv,'events.csv');
@@ -98,6 +107,10 @@ test('undated standalone indicators can still create findings',()=>{
 test('CSV rejects malformed rows and missing required fields',()=>{
   assert.throws(()=>parseLogs(`timestamp,event_type,source_ip\n${t(0)},network`,'events.csv'),/row 2 has 2 columns/);
   assert.throws(()=>parseLogs('source_ip,bytes_sent\n10.0.0.1,50000000','events.csv'),/needs a timestamp/);
+});
+test('pasted log text obeys the same input size limit as uploads',()=>{
+  assert.throws(()=>parseLogs('x'.repeat(2*1024*1024+1)),/2 MB/);
+  assert.throws(()=>parseLogs('अ'.repeat(800_000)),/2 MB/);
 });
 test('events without source identity cannot form a shared time-window alert',()=>{
   const records=Array.from({length:8},(_,i)=>({timestamp:t(i/4),event_type:'network',destination_port:20+i}));
