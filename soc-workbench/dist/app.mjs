@@ -12,14 +12,16 @@ const sample = [
   {timestamp:stamp(16),event_type:'http',source_ip:'192.0.2.33',method:'GET',path:'/health',status:200}
 ];
 let current={events:[],result:null,selected:null,filename:'sample-incident.json',aiBrief:null};
+let investigationRevision=0;
 const text=$('logs');
 text.value=JSON.stringify(sample,null,2);
 
 function escapeHTML(value) {return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function fmt(iso) {return new Date(iso).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'});}
+function fmt(iso) {return iso?new Date(iso).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'}):'Time unknown';}
 function setActive(id) { for(const item of ['sample-btn','file-btn','paste-btn']) $(item).classList.toggle('current',item===id); }
 function setError(message) { $('error').textContent=message; $('error').hidden=!message; }
 function analyze() {
+  investigationRevision++;
   setError('');
   try {
     const events=parseLogs(text.value,current.filename);
@@ -27,8 +29,8 @@ function analyze() {
     current={...current,events,result,selected:result.findings[0]?.id||null,aiBrief:null};
     render();
     $('ai-brief').replaceChildren();
-    $('input-meta').textContent=`${events.length} events parsed · ${result.findings.length} findings`;
-  } catch(err) {setError(err instanceof Error?err.message:'Could not read the supplied logs.');}
+    $('input-meta').textContent=`${events.length} events parsed · ${result.findings.length} findings${result.undated_count?` · ${result.undated_count} undated (excluded from time-window rules)`:''}`;
+  } catch(err) {setError(`${err instanceof Error?err.message:'Could not read the supplied logs.'} Previous results, if any, are still displayed.`);}
 }
 function render() {
   const {events,result}=current;
@@ -42,6 +44,7 @@ function render() {
   for(const f of result.findings) {
     const button=document.createElement('button'); button.type='button';
     button.className=`finding-card ${f.severity}${f.id===current.selected?' selected':''}`;
+    button.dataset.findingId=f.id;
     button.setAttribute('aria-pressed',String(f.id===current.selected));
     button.innerHTML=`<span class="finding-bar"></span><span class="finding-content"><span class="finding-top"><strong>${escapeHTML(f.title)}</strong><span class="severity">${escapeHTML(f.severity)}</span></span><p>${escapeHTML(f.source)} · ${f.evidence.length} evidence event${f.evidence.length===1?'':'s'} · ${escapeHTML(f.rule)}</p></span>`;
     button.addEventListener('click',()=>{current.selected=f.id;renderFindingsSelection();renderDetail();});
@@ -57,7 +60,7 @@ function render() {
 }
 function renderFindingsSelection() {
   for(const button of $('findings').querySelectorAll('.finding-card')) {
-    const selected=button.textContent?.includes(current.result.findings.find(f=>f.id===current.selected)?.title||'\uFFFF');
+    const selected=button.dataset.findingId===current.selected;
     button.classList.toggle('selected',!!selected);button.setAttribute('aria-pressed',String(!!selected));
   }
 }
@@ -103,6 +106,7 @@ async function checkAI() {
 }
 async function askAI() {
   if(!current.result)return;
+  const revision=investigationRevision;
   const button=$('ask-ai');button.disabled=true;button.textContent='Reviewing evidence…';$('ai-error').hidden=true;
   const ids=new Set(current.result.findings.flatMap(f=>f.evidence));
   const selected=current.events.filter(e=>ids.has(e.id)).slice(0,40);
@@ -110,9 +114,10 @@ async function askAI() {
   try {
     const response=await fetch('/api/analyst',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({findings:current.result.findings.slice(0,20),events})});
     const data=await response.json();if(!response.ok)throw new Error(data.error||`AI request failed (${response.status})`);
+    if(revision!==investigationRevision)return;
     current.aiBrief=data.brief;const b=data.brief;
     $('ai-brief').innerHTML=`<div class="ai-result"><h3>Model assessment</h3><p>${escapeHTML(b.assessment)}</p><h4>CITED EVENTS</h4><p>${b.evidence_ids.length?b.evidence_ids.map(id=>'#'+id).join(', '):'No specific event cited'}</p><h4>UNCERTAINTIES</h4><ul>${b.uncertainties.map(s=>`<li>${escapeHTML(s)}</li>`).join('')}</ul><h4>VALIDATION STEPS</h4><ul>${b.next_steps.map(s=>`<li>${escapeHTML(s)}</li>`).join('')}</ul></div>`;
-  } catch(error) { $('ai-error').textContent=error instanceof Error?error.message:'AI review unavailable';$('ai-error').hidden=false; }
+  } catch(error) { if(revision===investigationRevision){$('ai-error').textContent=error instanceof Error?error.message:'AI review unavailable';$('ai-error').hidden=false;} }
   finally {button.disabled=false;button.textContent='Ask external AI';}
 }
 $('ask-ai').addEventListener('click',askAI);
