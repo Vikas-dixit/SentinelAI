@@ -45,16 +45,23 @@ function looksLikeCSV(source) {
 }
 
 function parseCSV(text) {
-  const rows = []; let row = []; let cell = ''; let quoted = false;
+  const rows = []; let row = []; let cell = ''; let quoted = false; let closedQuote=false;
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (c === '"' && quoted && text[i + 1] === '"') { cell += '"'; i++; }
-    else if (c === '"') quoted = !quoted;
-    else if (c === ',' && !quoted) { row.push(cell); cell = ''; }
+    else if (c === '"' && quoted) { quoted=false; closedQuote=true; }
+    else if (c === '"') {
+      if (cell || closedQuote) throw new Error('CSV contains an unexpected quote.');
+      quoted=true;
+    }
+    else if (c === ',' && !quoted) { row.push(cell); cell = ''; closedQuote=false; }
     else if ((c === '\n' || c === '\r') && !quoted) {
       if (c === '\r' && text[i + 1] === '\n') i++;
-      row.push(cell); rows.push(row); row = []; cell = '';
-    } else cell += c;
+      row.push(cell); rows.push(row); row = []; cell = ''; closedQuote=false;
+    } else {
+      if (closedQuote && c!==' ' && c!=='\t') throw new Error('CSV contains text after a closing quote.');
+      cell += c;
+    }
   }
   if (quoted) throw new Error('CSV contains an unclosed quote.');
   if (cell || row.length) { row.push(cell); rows.push(row); }
@@ -118,16 +125,19 @@ function normalize(r, i) {
     ? (outcome==='success'?'login_success':'login_failed')
     : categories.includes('web')?'http'
     : categories.includes('network')?'network':null;
+  const port=Number(r.destination_port ?? r.dst_port ?? r.port ?? ecsDestination.port ?? 0);
+  const bytes=Number(r.bytes_sent ?? r.bytes_out ?? ecsSource.bytes ?? 0);
+  const status=Number(r.status ?? r.status_code ?? ecsResponse.status_code ?? 0);
   return {
     id: i + 1, timestamp, type: windowsAuthType || (type === 'login' ? (success ? 'login_success' : failure ? 'login_failed' : 'login_unknown') : authType[type] || (explicitType==null?ecsType:null) || type),
     source_ip: identity(r.source_ip ?? r.src_ip ?? r.src ?? r.ip ?? r.IpAddress ?? r.ipaddress ?? r.ip_address ?? ecsSource.ip,80),
     destination_ip: String(r.destination_ip ?? r.dst_ip ?? r.dst ?? ecsDestination.ip ?? '').slice(0,80),
     username: identity(r.username ?? (typeof r.user==='string'?r.user:undefined) ?? r.TargetUserName ?? r.targetusername ?? r.target_user_name ?? ecsUser.name,100),
-    destination_port: Number(r.destination_port ?? r.dst_port ?? r.port ?? ecsDestination.port ?? 0) || 0,
+    destination_port: Number.isInteger(port) && port>=1 && port<=65535 ? port : 0,
     process_name: String(r.process_name ?? (typeof r.process==='string'?r.process:undefined) ?? r.command ?? ecsProcess.command_line ?? ecsProcess.name ?? '').slice(0,250),
-    bytes_sent: Number(r.bytes_sent ?? r.bytes_out ?? ecsSource.bytes ?? 0) || 0,
+    bytes_sent: Number.isFinite(bytes) && bytes>=0 ? bytes : 0,
     method: String(r.method ?? ecsRequest.method ?? '').slice(0,20), path: String(r.path ?? (typeof r.url==='string'?r.url:undefined) ?? ecsUrl.path ?? '').slice(0,400),
-    status: Number(r.status ?? r.status_code ?? ecsResponse.status_code ?? 0) || 0,
+    status: Number.isInteger(status) && status>=100 && status<=599 ? status : 0,
     raw: String(r.raw ?? JSON.stringify(r)).slice(0,1200)
   };
 }
