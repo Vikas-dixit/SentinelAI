@@ -86,14 +86,7 @@ function normalize(r, i) {
   const ecsUser=obj(r.user), ecsProcess=obj(r.process), ecsHttp=obj(r.http);
   const ecsRequest=obj(ecsHttp.request), ecsResponse=obj(ecsHttp.response), ecsUrl=obj(r.url);
   const rawTime = r.timestamp ?? r.time ?? r['@timestamp'] ?? r.date ?? r.TimeCreated ?? r.timecreated ?? r.time_created;
-  const syslogTime = typeof rawTime === 'string' && /^[A-Z][a-z]{2}\s+\d+\s+\d\d:\d\d:\d\d$/.test(rawTime);
-  const parsed = rawTime ? new Date(syslogTime ? `${new Date().getFullYear()} ${rawTime}` : rawTime) : null;
-  let timestamp = parsed && !isNaN(+parsed) ? parsed.toISOString() : null;
-  // Syslog timestamps omit a year. Use the current year for display only.
-  if (rawTime && isNaN(Date.parse(rawTime))) {
-    const guess = new Date(`${new Date().getFullYear()} ${rawTime}`);
-    timestamp = isNaN(+guess) ? null : guess.toISOString();
-  }
+  const timestamp=parseTimestamp(rawTime);
   // Missing or invalid dates must not become fabricated time-window evidence.
   const explicitType=r.event_type ?? r.type ?? r.action;
   const type = String(explicitType ?? ecsEvent.action ?? 'other').toLowerCase().replace(/[ -]/g,'_');
@@ -123,6 +116,23 @@ function normalize(r, i) {
     status: Number(r.status ?? r.status_code ?? ecsResponse.status_code ?? 0) || 0,
     raw: String(r.raw ?? JSON.stringify(r)).slice(0,1200)
   };
+}
+
+function parseTimestamp(value) {
+  if (value==null || value==='') return null;
+  if (typeof value==='number' || /^\d+$/.test(String(value))) {
+    const numeric=Number(value);
+    if (!Number.isFinite(numeric) || (typeof value==='string' && !/^\d{10,13}$/.test(value))) return null;
+    const date=new Date(numeric<100_000_000_000?numeric*1000:numeric);
+    return isNaN(+date)?null:date.toISOString();
+  }
+  if (typeof value!=='string') return null;
+  // Syslog omits the year. A date well ahead of now is likely from last year.
+  const syslog=/^[A-Z][a-z]{2}\s+\d+\s+\d\d:\d\d:\d\d$/.test(value);
+  const now=new Date();
+  let date=new Date(syslog?`${now.getFullYear()} ${value}`:value);
+  if (syslog && +date > +now + 24*60*60_000) date=new Date(`${now.getFullYear()-1} ${value}`);
+  return isNaN(+date)?null:date.toISOString();
 }
 
 export function investigate(events) {
