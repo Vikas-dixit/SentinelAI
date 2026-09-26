@@ -125,9 +125,11 @@ export function investigate(events) {
     const failures = items.filter(e => e.timestamp && e.type === 'login_failed');
     const cluster = rollingCluster(failures,15*MINUTE,5);
     if (cluster) {
-      const laterSuccess = items.find(e => e.timestamp && e.type === 'login_success' && Date.parse(e.timestamp) >= Date.parse(cluster.at(-1).timestamp) && Date.parse(e.timestamp) - Date.parse(cluster.at(-1).timestamp) <= 30*MINUTE);
-      add('AUTH-001',laterSuccess?'Successful login after repeated failures':'Repeated authentication failures',laterSuccess?'critical':'high',laterSuccess?'high':'medium',laterSuccess?[...cluster,laterSuccess]:cluster,
-        `${source} produced ${cluster.length} failed logins in 15 minutes${laterSuccess?' followed by a successful login':''}. This pattern warrants account and source review.`,
+      const thresholdTime=Date.parse(cluster[4].timestamp);
+      const laterSuccess = items.find(e => e.timestamp && e.type === 'login_success' && Date.parse(e.timestamp) >= thresholdTime && Date.parse(e.timestamp) - thresholdTime <= 30*MINUTE);
+      const supportingFailures=laterSuccess?cluster.filter(e=>Date.parse(e.timestamp)<=Date.parse(laterSuccess.timestamp)):cluster;
+      add('AUTH-001',laterSuccess?'Successful login after repeated failures':'Repeated authentication failures',laterSuccess?'critical':'high',laterSuccess?'high':'medium',laterSuccess?[...supportingFailures,laterSuccess]:cluster,
+        `${source} produced ${supportingFailures.length} failed logins in 15 minutes${laterSuccess?' followed by a successful login':''}. This pattern warrants account and source review.`,
         ['Validate whether the source and account activity were authorized.','Review related authentication events and reset credentials if compromise is confirmed.','Apply rate limiting or MFA where appropriate.'],'Credential Access');
     }
     const network = items.filter(e=>e.timestamp && e.source_ip && e.destination_port>0 && ['network','connection','firewall'].includes(e.type));
@@ -153,7 +155,15 @@ export function investigate(events) {
   }
   const rank={critical:4,high:3,medium:2,low:1};
   findings.sort((a,b)=>rank[b.severity]-rank[a.severity] || (a.first_seen || '').localeCompare(b.first_seen || ''));
-  const score=Math.min(100,findings.reduce((n,f)=>n+({critical:45,high:27,medium:15,low:7}[f.severity]||0),0));
+  const byRule=new Map();
+  for(const finding of findings) {
+    const group=byRule.get(finding.rule)||{weight:0,count:0};
+    group.weight=Math.max(group.weight,({critical:70,high:40,medium:15,low:7}[finding.severity]||0));
+    group.count++;
+    byRule.set(finding.rule,group);
+  }
+  const score=Math.min(100,Math.round([...byRule.values()].reduce((total,{weight,count})=>
+    total+weight+Math.min(weight/2,Math.max(0,count-1)*3),0)));
   return {generated_at:new Date().toISOString(),event_count:events.length,undated_count:events.filter(e=>!e.timestamp).length,
     unrecognized_count:events.filter(e=>e.type==='other').length,findings,score,
     severity:score>=70?'critical':score>=40?'high':score>=15?'medium':'low',
