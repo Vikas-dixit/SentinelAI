@@ -11,7 +11,7 @@ const sample = [
   {timestamp:stamp(14),event_type:'transfer',source_ip:'10.0.0.12',destination_ip:'192.0.2.50',bytes_sent:72_000_000},
   {timestamp:stamp(16),event_type:'http',source_ip:'192.0.2.33',method:'GET',path:'/health',status:200}
 ];
-let current={events:[],result:null,selected:null,filename:'sample-incident.json'};
+let current={events:[],result:null,selected:null,filename:'sample-incident.json',aiBrief:null};
 const text=$('logs');
 text.value=JSON.stringify(sample,null,2);
 
@@ -24,8 +24,9 @@ function analyze() {
   try {
     const events=parseLogs(text.value,current.filename);
     const result=investigate(events);
-    current={...current,events,result,selected:result.findings[0]?.id||null};
+    current={...current,events,result,selected:result.findings[0]?.id||null,aiBrief:null};
     render();
+    $('ai-brief').replaceChildren();
     $('input-meta').textContent=`${events.length} events parsed · ${result.findings.length} findings`;
   } catch(err) {setError(err instanceof Error?err.message:'Could not read the supplied logs.');}
 }
@@ -92,6 +93,28 @@ $('dropzone').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.
 $('dropzone').addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';});
 $('dropzone').addEventListener('drop',e=>{e.preventDefault();setFile(e.dataTransfer.files?.[0]);});
 $('analyze-btn').addEventListener('click',analyze);
-$('download-report').addEventListener('click',()=>{if(current.result)download('sentinelai-incident-report.md',reportMarkdown(current.result,current.events),'text/markdown');});
-$('download-json').addEventListener('click',()=>{if(current.result)download('sentinelai-investigation.json',JSON.stringify({investigation:current.result,events:current.events},null,2),'application/json');});
+$('download-report').addEventListener('click',()=>{if(current.result){let report=reportMarkdown(current.result,current.events);if(current.aiBrief){report+='\n\n## External AI analyst brief\n'+current.aiBrief.assessment+'\n\nCited event IDs: '+current.aiBrief.evidence_ids.join(', ')+'\n\nUncertainties:\n'+current.aiBrief.uncertainties.map(s=>'- '+s).join('\n')+'\n\nNext steps:\n'+current.aiBrief.next_steps.map(s=>'- '+s).join('\n');}download('sentinelai-incident-report.md',report,'text/markdown');}});
+$('download-json').addEventListener('click',()=>{if(current.result)download('sentinelai-investigation.json',JSON.stringify({investigation:current.result,events:current.events,ai_brief:current.aiBrief},null,2),'application/json');});
+async function checkAI() {
+  try {const response=await fetch('/api/analyst',{cache:'no-store'});const data=await response.json();
+    $('ai-status').textContent=data.configured?`OpenAI ${data.model} ready`:'API key not configured';
+    $('ask-ai').disabled=!data.configured;
+  } catch { $('ai-status').textContent='AI service unavailable';$('ask-ai').disabled=true; }
+}
+async function askAI() {
+  if(!current.result)return;
+  const button=$('ask-ai');button.disabled=true;button.textContent='Reviewing evidence…';$('ai-error').hidden=true;
+  const ids=new Set(current.result.findings.flatMap(f=>f.evidence));
+  const selected=current.events.filter(e=>ids.has(e.id)).slice(0,40);
+  const events=selected.length?selected:current.events.slice(0,40);
+  try {
+    const response=await fetch('/api/analyst',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({findings:current.result.findings.slice(0,20),events})});
+    const data=await response.json();if(!response.ok)throw new Error(data.error||`AI request failed (${response.status})`);
+    current.aiBrief=data.brief;const b=data.brief;
+    $('ai-brief').innerHTML=`<div class="ai-result"><h3>Model assessment</h3><p>${escapeHTML(b.assessment)}</p><h4>CITED EVENTS</h4><p>${b.evidence_ids.length?b.evidence_ids.map(id=>'#'+id).join(', '):'No specific event cited'}</p><h4>UNCERTAINTIES</h4><ul>${b.uncertainties.map(s=>`<li>${escapeHTML(s)}</li>`).join('')}</ul><h4>VALIDATION STEPS</h4><ul>${b.next_steps.map(s=>`<li>${escapeHTML(s)}</li>`).join('')}</ul></div>`;
+  } catch(error) { $('ai-error').textContent=error instanceof Error?error.message:'AI review unavailable';$('ai-error').hidden=false; }
+  finally {button.disabled=false;button.textContent='Ask external AI';}
+}
+$('ask-ai').addEventListener('click',askAI);
 analyze();
+checkAI();
