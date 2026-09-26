@@ -23,7 +23,7 @@
     <main class="main">
       <header class="topbar">
         <div class="breadcrumb">Workspace <span>/</span> Investigation</div>
-        <div class="private-pill"><span class="status-dot"></span> Local analysis · no external AI API</div>
+        <div class="private-pill"><span class="status-dot"></span> Private investigation workspace</div>
       </header>
       <div class="content">
         <div class="page-heading">
@@ -62,9 +62,18 @@
               <div class="panel-heading"><div><h2>Analyst brief</h2><p>Detection rationale and next steps</p></div><span class="step">03 / REVIEW</span></div>
               <div id="detail" class="detail-empty">Run an investigation to see evidence and recommended checks.</div>
             </section>
+            <section class="panel ai-panel">
+              <div class="panel-heading"><div><h2>External AI analyst</h2><p>Review selected evidence with OpenAI after local triage</p></div><span class="step">04 / EXPLAIN</span></div>
+              <div class="ai-body">
+                <p class="ai-disclosure">When you request AI review, up to 40 event excerpts and 20 findings are sent to the OpenAI API. Remove secrets or personal data first. API usage may be billed separately from ChatGPT Plus.</p>
+                <div class="ai-control"><span id="ai-status">Checking connection…</span><button class="button dark" type="button" id="ask-ai" disabled>Ask external AI</button></div>
+                <p class="error" id="ai-error" role="alert" hidden></p>
+                <div id="ai-brief" aria-live="polite"></div>
+              </div>
+            </section>
           </div>
         </section>
-        <footer>SentinelAI analyzes only the data you provide in this browser. Treat findings as leads and verify them before taking action. Avoid uploading secrets or production logs to a shared device.</footer>
+        <footer>Local triage runs in this browser. Only the optional AI review sends selected evidence to OpenAI. Treat all findings as leads and verify them before taking action.</footer>
       </div>
     </main>
   </div>
