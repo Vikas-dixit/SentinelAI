@@ -1,6 +1,8 @@
 const MINUTE = 60_000;
 
 export function parseLogs(text, filename = '') {
+  if (text.length > 2*1024*1024 || new TextEncoder().encode(text).byteLength > 2*1024*1024)
+    throw new Error('Use at most 2 MB of log text per investigation.');
   const source = text.trim();
   if (!source) throw new Error('Paste logs or choose a file first.');
   let records;
@@ -90,7 +92,10 @@ function normalize(r, i) {
   // Missing or invalid dates must not become fabricated time-window evidence.
   const explicitType=r.event_type ?? r.type ?? r.action;
   const type = String(explicitType ?? ecsEvent.action ?? 'other').toLowerCase().replace(/[ -]/g,'_');
-  const success = r.success === true || String(r.success).toLowerCase() === 'true';
+  const outcome=String(ecsEvent.outcome||'').toLowerCase();
+  const successValue=r.success ?? r.outcome ?? outcome;
+  const success=['true','1','success'].includes(String(successValue).toLowerCase());
+  const failure=['false','0','failure','failed'].includes(String(successValue).toLowerCase());
   const authType = {
     auth_failure:'login_failed', authentication_failure:'login_failed', failed_login:'login_failed', login_failure:'login_failed',
     auth_success:'login_success', authentication_success:'login_success', successful_login:'login_success', login_succeeded:'login_success'
@@ -99,13 +104,12 @@ function normalize(r, i) {
   const windowsAuthType = [4624,4625].includes(windowsEventId) && ['other','windows_security','security'].includes(type)
     ? (windowsEventId===4624?'login_success':'login_failed') : null;
   const categories=Array.isArray(ecsEvent.category)?ecsEvent.category:[ecsEvent.category];
-  const outcome=String(ecsEvent.outcome||'').toLowerCase();
   const ecsType=categories.includes('authentication') && ['success','failure'].includes(outcome)
     ? (outcome==='success'?'login_success':'login_failed')
     : categories.includes('web')?'http'
     : categories.includes('network')?'network':null;
   return {
-    id: i + 1, timestamp, type: windowsAuthType || (type === 'login' ? (success ? 'login_success' : 'login_failed') : authType[type] || (explicitType==null?ecsType:null) || type),
+    id: i + 1, timestamp, type: windowsAuthType || (type === 'login' ? (success ? 'login_success' : failure ? 'login_failed' : 'login_unknown') : authType[type] || (explicitType==null?ecsType:null) || type),
     source_ip: String(r.source_ip ?? r.src_ip ?? r.src ?? r.ip ?? r.IpAddress ?? r.ipaddress ?? r.ip_address ?? ecsSource.ip ?? '').slice(0,80),
     destination_ip: String(r.destination_ip ?? r.dst_ip ?? r.dst ?? ecsDestination.ip ?? '').slice(0,80),
     username: String(r.username ?? (typeof r.user==='string'?r.user:undefined) ?? r.TargetUserName ?? r.targetusername ?? r.target_user_name ?? ecsUser.name ?? '').slice(0,100),
@@ -196,7 +200,7 @@ export function investigate(events) {
   const score=Math.min(100,Math.round([...byRule.values()].reduce((total,{weight,count})=>
     total+weight+Math.min(weight/2,Math.max(0,count-1)*3),0)));
   return {generated_at:new Date().toISOString(),event_count:events.length,undated_count:events.filter(e=>!e.timestamp).length,
-    unrecognized_count:events.filter(e=>e.type==='other').length,findings,score,
+    unrecognized_count:events.filter(e=>e.type==='other').length,unknown_outcome_count:events.filter(e=>e.type==='login_unknown').length,findings,score,
     severity:score>=70?'critical':score>=40?'high':score>=15?'medium':'low',
     timeline:ordered.map(e=>({id:e.id,timestamp:e.timestamp,type:e.type,source:e.source_ip||e.username||'unknown',summary:eventSummary(e)}))};
 }
@@ -236,7 +240,7 @@ function eventSummary(e) {
 
 export function reportMarkdown(result, events) {
   const eventById=new Map(events.map(e=>[e.id,e]));
-  const lines=['# SentinelAI Incident Investigation','',`Generated: ${result.generated_at}`,`Events analyzed: ${result.event_count}`,`Events without a valid timestamp: ${result.undated_count || 0}`,`Events with an unrecognized type: ${result.unrecognized_count || 0}`,`Risk score: ${result.score}/100 (${result.severity})`,'',
+  const lines=['# SentinelAI Incident Investigation','',`Generated: ${result.generated_at}`,`Events analyzed: ${result.event_count}`,`Events without a valid timestamp: ${result.undated_count || 0}`,`Login events with unknown outcome: ${result.unknown_outcome_count || 0}`,`Events with an unrecognized type: ${result.unrecognized_count || 0}`,`Risk score: ${result.score}/100 (${result.severity})`,'',
     '## Scope and method','Rule-based triage of supplied logs. Findings are hypotheses requiring analyst validation; no external enrichment or live endpoint action was performed.','',
     '## Findings'];
   if(!result.findings.length) lines.push('No configured detection rule matched. This does not establish that the activity is benign.');
