@@ -58,19 +58,33 @@ function parseTextLine(line) {
   const apacheTime = line.match(/\[(\d{1,2})\/([A-Z][a-z]{2})\/(\d{4}):(\d\d:\d\d:\d\d)\s+([+-]\d{4})\]/);
   const time = apacheTime ? `${apacheTime[1]} ${apacheTime[2]} ${apacheTime[3]} ${apacheTime[4]} GMT${apacheTime[5].slice(0,3)}:${apacheTime[5].slice(3)}`
     : line.match(/^([A-Z][a-z]{2}\s+\d+\s+\d\d:\d\d:\d\d|\d{4}-\d\d-\d\d[T ][\d:.+-Z]+)/)?.[1];
-  const ip = line.match(/(?:from |src(?:_ip)?=|client=)(\[?[0-9a-f:.]+\]?)/i)?.[1]?.replace(/^\[|\]$/g,'') || '';
+  const ip = literalIP(line.match(/(?:from |src(?:_ip)?=|client=)(\[?[0-9a-f:.]+\]?)/i)?.[1]);
   const user = line.match(/(?:for (?:invalid user )?|user(?:name)?=)([\w.@-]+)/i)?.[1] || '';
   const port = Number(line.match(/(?:port |dpt=)(\d+)/i)?.[1] || 0);
   const http = line.match(/"(GET|POST|PUT|DELETE|PATCH)\s+(\S+)\s+HTTP\/[^\"]+"\s+(\d{3})/i);
   if (/Failed password|authentication failure|login failed/i.test(line)) return {timestamp: time, event_type:'login_failed', source_ip:ip, username:user, destination_port:port, raw:line};
   if (/Accepted password|Accepted publickey|login success/i.test(line)) return {timestamp:time, event_type:'login_success', source_ip:ip, username:user, destination_port:port, raw:line};
-  if (http) return {timestamp:time, event_type:'http', source_ip:ip || line.match(/^(\[?[0-9a-f:.]+\]?)\s/i)?.[1]?.replace(/^\[|\]$/g,''), method:http[1], path:http[2], status:Number(http[3]), raw:line};
+  if (http) return {timestamp:time, event_type:'http', source_ip:ip || literalIP(line.match(/^(\[?[0-9a-f:.]+\]?)\s/i)?.[1]), method:http[1], path:http[2], status:Number(http[3]), raw:line};
   if (/DPT=|port scan/i.test(line)) return {timestamp:time, event_type:'network', source_ip:ip, destination_port:port, raw:line};
   return {timestamp:time, event_type:'other', source_ip:ip, username:user, raw:line};
 }
 
+function literalIP(value) {
+  const candidate=(value||'').replace(/^\[|\]$/g,'');
+  if (candidate.includes(':')) {
+    try { new URL(`http://[${candidate}]/`); return candidate; }
+    catch { return ''; }
+  }
+  const octets=candidate.split('.');
+  return octets.length===4 && octets.every(x=>/^\d{1,3}$/.test(x) && Number(x)<=255) ? candidate : '';
+}
+
 function normalize(r, i) {
   if (!r || typeof r !== 'object' || Array.isArray(r)) throw new Error(`Event ${i + 1} must be an object.`);
+  const obj=value=>value && typeof value==='object' && !Array.isArray(value) ? value : {};
+  const ecsEvent=obj(r.event), ecsSource=obj(r.source), ecsDestination=obj(r.destination);
+  const ecsUser=obj(r.user), ecsProcess=obj(r.process), ecsHttp=obj(r.http);
+  const ecsRequest=obj(ecsHttp.request), ecsResponse=obj(ecsHttp.response), ecsUrl=obj(r.url);
   const rawTime = r.timestamp ?? r.time ?? r['@timestamp'] ?? r.date ?? r.TimeCreated ?? r.timecreated ?? r.time_created;
   const syslogTime = typeof rawTime === 'string' && /^[A-Z][a-z]{2}\s+\d+\s+\d\d:\d\d:\d\d$/.test(rawTime);
   const parsed = rawTime ? new Date(syslogTime ? `${new Date().getFullYear()} ${rawTime}` : rawTime) : null;
@@ -81,7 +95,8 @@ function normalize(r, i) {
     timestamp = isNaN(+guess) ? null : guess.toISOString();
   }
   // Missing or invalid dates must not become fabricated time-window evidence.
-  const type = String(r.event_type ?? r.type ?? r.action ?? 'other').toLowerCase().replace(/[ -]/g,'_');
+  const explicitType=r.event_type ?? r.type ?? r.action;
+  const type = String(explicitType ?? ecsEvent.action ?? 'other').toLowerCase().replace(/[ -]/g,'_');
   const success = r.success === true || String(r.success).toLowerCase() === 'true';
   const authType = {
     auth_failure:'login_failed', authentication_failure:'login_failed', failed_login:'login_failed', login_failure:'login_failed',
@@ -90,16 +105,22 @@ function normalize(r, i) {
   const windowsEventId = Number(r.event_id ?? r.EventID ?? r.eventId ?? r.eventid);
   const windowsAuthType = [4624,4625].includes(windowsEventId) && ['other','windows_security','security'].includes(type)
     ? (windowsEventId===4624?'login_success':'login_failed') : null;
+  const categories=Array.isArray(ecsEvent.category)?ecsEvent.category:[ecsEvent.category];
+  const outcome=String(ecsEvent.outcome||'').toLowerCase();
+  const ecsType=categories.includes('authentication') && ['success','failure'].includes(outcome)
+    ? (outcome==='success'?'login_success':'login_failed')
+    : categories.includes('web')?'http'
+    : categories.includes('network')?'network':null;
   return {
-    id: i + 1, timestamp, type: windowsAuthType || (type === 'login' ? (success ? 'login_success' : 'login_failed') : authType[type] || type),
-    source_ip: String(r.source_ip ?? r.src_ip ?? r.src ?? r.ip ?? r.IpAddress ?? r.ipaddress ?? r.ip_address ?? '').slice(0,80),
-    destination_ip: String(r.destination_ip ?? r.dst_ip ?? r.dst ?? '').slice(0,80),
-    username: String(r.username ?? r.user ?? r.TargetUserName ?? r.targetusername ?? r.target_user_name ?? '').slice(0,100),
-    destination_port: Number(r.destination_port ?? r.dst_port ?? r.port ?? 0) || 0,
-    process_name: String(r.process_name ?? r.process ?? r.command ?? '').slice(0,250),
-    bytes_sent: Number(r.bytes_sent ?? r.bytes_out ?? 0) || 0,
-    method: String(r.method ?? '').slice(0,20), path: String(r.path ?? r.url ?? '').slice(0,400),
-    status: Number(r.status ?? r.status_code ?? 0) || 0,
+    id: i + 1, timestamp, type: windowsAuthType || (type === 'login' ? (success ? 'login_success' : 'login_failed') : authType[type] || (explicitType==null?ecsType:null) || type),
+    source_ip: String(r.source_ip ?? r.src_ip ?? r.src ?? r.ip ?? r.IpAddress ?? r.ipaddress ?? r.ip_address ?? ecsSource.ip ?? '').slice(0,80),
+    destination_ip: String(r.destination_ip ?? r.dst_ip ?? r.dst ?? ecsDestination.ip ?? '').slice(0,80),
+    username: String(r.username ?? (typeof r.user==='string'?r.user:undefined) ?? r.TargetUserName ?? r.targetusername ?? r.target_user_name ?? ecsUser.name ?? '').slice(0,100),
+    destination_port: Number(r.destination_port ?? r.dst_port ?? r.port ?? ecsDestination.port ?? 0) || 0,
+    process_name: String(r.process_name ?? (typeof r.process==='string'?r.process:undefined) ?? r.command ?? ecsProcess.command_line ?? ecsProcess.name ?? '').slice(0,250),
+    bytes_sent: Number(r.bytes_sent ?? r.bytes_out ?? ecsSource.bytes ?? 0) || 0,
+    method: String(r.method ?? ecsRequest.method ?? '').slice(0,20), path: String(r.path ?? (typeof r.url==='string'?r.url:undefined) ?? ecsUrl.path ?? '').slice(0,400),
+    status: Number(r.status ?? r.status_code ?? ecsResponse.status_code ?? 0) || 0,
     raw: String(r.raw ?? JSON.stringify(r)).slice(0,1200)
   };
 }
