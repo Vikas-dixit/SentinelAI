@@ -127,6 +127,24 @@ test('exports evidence for a large batch of standalone findings',()=>{
   const events=parseLogs(JSON.stringify(records));
   const result=investigate(events);
   assert.equal(result.findings.length,1000);
+  assert.equal(result.score,60);
+  assert.equal(result.severity,'high');
   const report=reportMarkdown(result,events);
   assert.match(report,/Event 1000 \[/);
+});
+test('one critical authentication pattern yields critical overall risk',()=>{
+  const records=[...Array.from({length:5},(_,i)=>({timestamp:t(i),event_type:'login_failed',source_ip:'203.0.113.10'})),
+    {timestamp:t(6),event_type:'login_success',source_ip:'203.0.113.10'}];
+  const result=investigate(parseLogs(JSON.stringify(records)));
+  assert.equal(result.score,70);
+  assert.equal(result.severity,'critical');
+});
+test('success after the fifth failure is retained even if another failure follows',()=>{
+  const records=[...Array.from({length:5},(_,i)=>({timestamp:t(i),event_type:'login_failed',source_ip:'203.0.113.10'})),
+    {timestamp:t(5),event_type:'login_success',source_ip:'203.0.113.10'},
+    {timestamp:t(6),event_type:'login_failed',source_ip:'203.0.113.10'}];
+  const result=investigate(parseLogs(JSON.stringify(records)));
+  assert.equal(result.findings[0].severity,'critical');
+  assert.deepEqual(result.findings[0].evidence,[1,2,3,4,5,6]);
+  assert.equal(result.findings[0].last_seen,t(5));
 });
