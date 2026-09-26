@@ -1,0 +1,1 @@
+The deployed app is a Vinext/Cloudflare Workers Site. `app/api/analyst/route.ts` and `lib/llm-client.mjs` show its private external-LLM integration; `app/page.tsx` embeds the workbench assets. The host project is generated from the Sites Vinext starter. Keep `OPENAI_API_KEY` in the host's secret environment, never in the repository or browser bundle.
